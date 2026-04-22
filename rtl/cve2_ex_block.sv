@@ -37,6 +37,9 @@ module cve2_ex_block #(
   output logic [33:0]           imd_val_d_o[2],
   input  logic [33:0]           imd_val_q_i[2],
 
+  input  logic                  carry_in_i,
+  output logic                  carry_out_o,
+
   // Outputs
   output logic [31:0]           alu_adder_result_ex_o, // to LSU
   output logic [31:0]           result_ex_o,
@@ -103,6 +106,8 @@ module cve2_ex_block #(
     .imd_val_q_i        (alu_imd_val_q),
     .imd_val_we_o       (alu_imd_val_we),
     .imd_val_d_o        (alu_imd_val_d),
+    .carry_in_i         (carry_in_i),
+    .carry_out_o        (carry_out_o),
     .multdiv_operand_a_i(multdiv_alu_operand_a),
     .multdiv_operand_b_i(multdiv_alu_operand_b),
     .multdiv_sel_i      (multdiv_sel),

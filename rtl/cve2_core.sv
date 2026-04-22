@@ -175,12 +175,16 @@ module cve2_core import cve2_pkg::*; #(
   // Register File
   logic [4:0]  rf_raddr_a;
   logic [31:0] rf_rdata_a;
+  logic        rf_r_upper_a;
   logic [4:0]  rf_raddr_b;
   logic [31:0] rf_rdata_b;
+  logic        rf_r_upper_b;
   logic        rf_ren_a;
   logic        rf_ren_b;
   logic [4:0]  rf_waddr_wb;
   logic [31:0] rf_wdata_wb;
+  logic        rf_w_upper_wb;
+  logic        rf_w_upper_id;
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
   logic [31:0] rf_wdata_lsu;
@@ -191,6 +195,12 @@ module cve2_core import cve2_pkg::*; #(
   logic [31:0] rf_wdata_id;
   logic        rf_we_id;
 
+  logic [1:0]           r_a_tag;
+  logic [1:0]           r_b_tag;
+  logic [1:0]           w_tag;
+
+  logic                 w_tag_id;
+
   // ALU Control
   alu_op_e     alu_operator_ex;
   logic [31:0] alu_operand_a_ex;
@@ -198,6 +208,9 @@ module cve2_core import cve2_pkg::*; #(
 
   logic [31:0] alu_adder_result_ex;    // Used to forward computed address to LSU
   logic [31:0] result_ex;
+
+  logic        carry_in;
+  logic        carry_out;
 
   // Multiplier Control
   logic        mult_en_ex;
@@ -447,6 +460,8 @@ module cve2_core import cve2_pkg::*; #(
     .priv_mode_i          (priv_mode_id),
     .csr_mstatus_tw_i     (csr_mstatus_tw),
     .illegal_csr_insn_i   (illegal_csr_insn_id),
+    .carry_in_o           (carry_in),
+    .carry_out_i          (carry_out),
 
     // LSU
     .lsu_req_o     (lsu_req),  // to load store unit
@@ -471,6 +486,12 @@ module cve2_core import cve2_pkg::*; #(
 
     // Register Interface
     .x_register_o(x_register_o),
+    .r_a_upper_o(rf_r_upper_a),
+    .r_b_upper_o(rf_r_upper_b),
+    .r_a_tag_i(r_a_tag),
+    .r_b_tag_i(r_b_tag),
+    .rf_w_upper_id_o(rf_w_upper_id),
+    .w_tag_id_o(w_tag_id),
 
     // Commit Interface
     .x_commit_valid_o(x_commit_valid_o),
@@ -555,6 +576,9 @@ module cve2_core import cve2_pkg::*; #(
     .imd_val_we_o(imd_val_we_ex),
     .imd_val_d_o (imd_val_d_ex),
     .imd_val_q_i (imd_val_q_ex),
+
+    .carry_in_i  (carry_in),
+    .carry_out_o (carry_out),
 
     // Outputs
     .alu_adder_result_ex_o(alu_adder_result_ex),  // to LSU
@@ -642,7 +666,13 @@ module cve2_core import cve2_pkg::*; #(
     .rf_we_wb_o   (rf_we_wb),
 
     .lsu_resp_valid_i(lsu_resp_valid),
-    .lsu_resp_err_i  (lsu_resp_err)
+    .lsu_resp_err_i  (lsu_resp_err),
+
+    .w_tag_o(w_tag),
+    .w_upper_i(rf_w_upper_id),
+    .w_upper_o(rf_w_upper_wb),
+
+    .w_tag_id_i(w_tag_id)
   );
 
   ///////////////////////
@@ -700,11 +730,17 @@ module cve2_core import cve2_pkg::*; #(
 
     .raddr_a_i(rf_raddr_a),
     .rdata_a_o(rf_rdata_a),
+    .r_a_upper_i(rf_r_upper_a),
+    .r_a_tag_o(r_a_tag),
     .raddr_b_i(rf_raddr_b),
     .rdata_b_o(rf_rdata_b),
+    .r_b_upper_i(rf_r_upper_b),
+    .r_b_tag_o(r_b_tag),
+    .w_tag_i(w_tag),
     .waddr_a_i(rf_waddr_wb),
     .wdata_a_i(rf_wdata_wb),
-    .we_a_i   (rf_we_wb)
+    .we_a_i   (rf_we_wb),
+    .w_upper_i(rf_w_upper_wb)
   );
 
 

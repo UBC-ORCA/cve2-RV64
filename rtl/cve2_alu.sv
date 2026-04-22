@@ -25,6 +25,9 @@ module cve2_alu #(
   output logic [31:0]       imd_val_d_o[2],
   output logic [1:0]        imd_val_we_o,
 
+  input  logic              carry_in_i,
+  output logic              carry_out_o,
+
   output logic [31:0]       adder_result_o,
   output logic [33:0]       adder_result_ext_o,
 
@@ -98,7 +101,7 @@ module cve2_alu #(
     unique case (1'b1)
       multdiv_sel_i:     adder_in_b = multdiv_operand_b_i;
       adder_op_b_negate: adder_in_b = operand_b_neg;
-      default:           adder_in_b = {operand_b_i, 1'b0};
+      default:           adder_in_b = {operand_b_i, carry_in_i};
     endcase
   end
 
@@ -106,6 +109,7 @@ module cve2_alu #(
   assign adder_result_ext_o = $unsigned(adder_in_a) + $unsigned(adder_in_b);
 
   assign adder_result       = adder_result_ext_o[32:1];
+  assign carry_out_o        = adder_result_ext_o[33];
 
   assign adder_result_o     = adder_result;
 
