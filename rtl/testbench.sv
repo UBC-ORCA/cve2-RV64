@@ -605,36 +605,45 @@ module testbench;
     write_rf_half(addr, data, 1'b0, 2'b00);
   endtask
 
-  // --------------------
-  // Inject ADD x3,x1,x2 and dynamically wait for completion, counting cycles
-  // --------------------
-  localparam logic [31:0] ADD_X3_X1_X2 = 32'h002081b3;
 
-  task automatic inject_add(output int unsigned cycles_taken);
+  localparam logic [31:0] ADD_X3_X1_X2 = 32'h002081b3;
+  localparam logic [31:0] SUB_X3_X1_X2 = 32'h402081b3;
+  localparam logic [31:0] AND_X3_X1_X2  = 32'h0020f1b3;
+  localparam logic [31:0] OR_X3_X1_X2   = 32'h0020e1b3;
+  localparam logic [31:0] XOR_X3_X1_X2  = 32'h0020c1b3;
+  localparam logic [31:0] ADDI_X3_X1_POS = 32'h00508193;  // ADDI x3, x1, +5
+  localparam logic [31:0] ADDI_X3_X1_NEG = 32'hfff08193;  // ADDI x3, x1, -1
+  localparam logic [31:0] ANDI_X3_X1_POS = 32'h0050f193;  // ANDI x3, x1, +5
+  localparam logic [31:0] ANDI_X3_X1_NEG = 32'hfff0f193;  // ANDI x3, x1, -1
+  localparam logic [31:0] ORI_X3_X1_POS  = 32'h0050e193;  // ORI  x3, x1, +5
+  localparam logic [31:0] ORI_X3_X1_NEG  = 32'hfff0e193;  // ORI  x3, x1, -1
+  localparam logic [31:0] XORI_X3_X1_POS = 32'h0050c193;  // XORI x3, x1, +5
+  localparam logic [31:0] XORI_X3_X1_NEG = 32'hfff0c193;  // XORI x3, x1, -1
+
+  task automatic inject_instr(input  logic [31:0]  encoding,
+                            output int unsigned  cycles_taken);
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
-    instr_rdata_i     = ADD_X3_X1_X2;
-    instr_rdata_alu_i = ADD_X3_X1_X2;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
 
-    // Wait one posedge: FIRST_CYCLE executes, lower write commits
+    // Wait one posedge: FIRST_CYCLE executes
     @(posedge clk_i);
     #1;
 
-    if (dut_id.id_fsm_q == 1'b1) begin  // 1'b1 = MULTI_CYCLE
+    if (dut_id.id_fsm_q == 1'b1) begin  // MULTI_CYCLE
       cycles_taken = 2;
-      @(posedge clk_i);  // upper write commits at this edge
+      @(posedge clk_i);
       #1;
     end else begin
       cycles_taken = 1;
     end
 
-    // Deassert instruction
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
     instr_rdata_alu_i = 32'h0000_0013;
 
-    // Let writes propagate
     repeat (3) @(posedge clk_i);
   endtask
 
@@ -730,7 +739,7 @@ module testbench;
     $display("\n---- Test 1: tag00+tag00, no carry ----");
     write_rf_32(5'd1, 32'h0000_0005);
     write_rf_32(5'd2, 32'h0000_0003);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T01", 5'd3, 32'h0000_0008, 2'b00, 1, cycles,
                  32'h0, 1'b0);
 
@@ -741,7 +750,7 @@ module testbench;
     $display("\n---- Test 2: tag00+tag00, carry ignored ----");
     write_rf_32(5'd1, 32'hFFFF_FFFF);
     write_rf_32(5'd2, 32'h0000_0001);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T02", 5'd3, 32'h0000_0000, 2'b00, 1, cycles,
                  32'h0, 1'b0);
 
@@ -754,7 +763,7 @@ module testbench;
     $display("\n---- Test 3: tag10+tag10, no carry ----");
     write_rf_64(5'd1, 32'h0, 32'h0000_0005, 2'b10);
     write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T03", 5'd3, 32'h0000_0008, 2'b10, 1, cycles,
                  32'h0, 1'b0);
 
@@ -767,7 +776,7 @@ module testbench;
     $display("\n---- Test 4: tag10+tag10, carry → 2 cycles ----");
     write_rf_64(5'd1, 32'h0, 32'hFFFF_FFFF, 2'b10);
     write_rf_64(5'd2, 32'h0, 32'h0000_0001, 2'b10);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T04", 5'd3, 32'h0000_0000, 2'b01, 2, cycles,
                  32'h0000_0001, 1'b1);
 
@@ -780,7 +789,7 @@ module testbench;
     $display("\n---- Test 5: tag10+tag11, no carry ----");
     write_rf_64(5'd1, 32'h0, 32'h0000_0005, 2'b10);
     write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T05", 5'd3, 32'h0000_0008, 2'b11, 1, cycles,
                  32'h0, 1'b0);
 
@@ -793,7 +802,7 @@ module testbench;
     $display("\n---- Test 6: tag10+tag11, carry ----");
     write_rf_64(5'd1, 32'h0, 32'hFFFF_FFFF, 2'b10);
     write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0001, 2'b11);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T06", 5'd3, 32'h0000_0000, 2'b10, 1, cycles,
                  32'h0, 1'b0);
 
@@ -806,7 +815,7 @@ module testbench;
     $display("\n---- Test 7: tag11+tag10, no carry ----");
     write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
     write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T07", 5'd3, 32'h0000_0008, 2'b11, 1, cycles,
                  32'h0, 1'b0);
 
@@ -819,7 +828,7 @@ module testbench;
     $display("\n---- Test 8: tag11+tag10, carry ----");
     write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hFFFF_FFFF, 2'b11);
     write_rf_64(5'd2, 32'h0, 32'h0000_0001, 2'b10);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T08", 5'd3, 32'h0000_0000, 2'b10, 1, cycles,
                  32'h0, 1'b0);
 
@@ -832,7 +841,7 @@ module testbench;
     $display("\n---- Test 9: tag11+tag11, no carry → 2 cycles ----");
     write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
     write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T09", 5'd3, 32'h0000_0008, 2'b01, 2, cycles,
                  32'hFFFF_FFFE, 1'b1);
 
@@ -845,7 +854,7 @@ module testbench;
     $display("\n---- Test 10: tag11+tag11, carry ----");
     write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hFFFF_FFFF, 2'b11);
     write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0001, 2'b11);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T10", 5'd3, 32'h0000_0000, 2'b11, 1, cycles,
                  32'h0, 1'b0);
 
@@ -858,7 +867,7 @@ module testbench;
     $display("\n---- Test 11: tag01+tag01, no carry ----");
     write_rf_64(5'd1, 32'h0000_0003, 32'h0000_0005, 2'b01);
     write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0002, 2'b01);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T11", 5'd3, 32'h0000_0007, 2'b01, 2, cycles,
                  32'h0000_0004, 1'b1);
 
@@ -871,7 +880,7 @@ module testbench;
     $display("\n---- Test 12: tag01+tag01, carry ----");
     write_rf_64(5'd1, 32'h0000_0001, 32'hFFFF_FFFF, 2'b01);
     write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b01);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T12", 5'd3, 32'h0000_0000, 2'b01, 2, cycles,
                  32'h0000_0002, 1'b1);
 
@@ -883,7 +892,7 @@ module testbench;
     $display("\n---- Test 13: tag01+tag10 → 2 cycles ----");
     write_rf_64(5'd1, 32'hABCD_0000, 32'h0000_0005, 2'b01);
     write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T13", 5'd3, 32'h0000_0008, 2'b01, 2, cycles,
                  32'hABCD_0000, 1'b1);
 
@@ -896,7 +905,7 @@ module testbench;
     $display("\n---- Test 14: tag01+tag01, upper=0 → tag 10 ----");
     write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b01);
     write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T14", 5'd3, 32'h0000_0008, 2'b10, 2, cycles,
                  32'h0000_0000, 1'b1);
 
@@ -909,7 +918,7 @@ module testbench;
     $display("\n---- Test 15: tag01+tag01, upper=FF → tag 11 ----");
     write_rf_64(5'd1, 32'hFFFF_FFFE, 32'h0000_0005, 2'b01);
     write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
-    inject_add(cycles);
+    inject_instr(ADD_X3_X1_X2, cycles);
     check_result("T15", 5'd3, 32'h0000_0008, 2'b11, 2, cycles,
                  32'hFFFF_FFFF, 1'b1);
 
@@ -917,8 +926,460 @@ module testbench;
     // Done
     // ==========================================================
     $display("\n==============================");
-    $display("All %0d tests complete", 15);
+    $display("All %0d add tests complete", 15);
     $display("==============================");
+
+
+    // ==========================================================
+    // SUB tests
+    // ==========================================================
+    $display("\n========== SUB tests ==========");
+
+    // SUB-1: tag00-tag00, no borrow. Pure 32-bit subtract, tag 00.
+    $display("\n---- SUB-1: tag00-tag00, no borrow ----");
+    write_rf_32(5'd1, 32'h0000_0005);
+    write_rf_32(5'd2, 32'h0000_0003);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S01", 5'd3, 32'h0000_0002, 2'b00, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-2: tag00-tag00, borrow ignored for word-sized result.
+    $display("\n---- SUB-2: tag00-tag00, borrow ignored ----");
+    write_rf_32(5'd1, 32'h0000_0003);
+    write_rf_32(5'd2, 32'h0000_0005);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S02", 5'd3, 32'hFFFF_FFFE, 2'b00, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-3: tag10-tag10, no borrow -> inferred zero upper, 1 cycle.
+    $display("\n---- SUB-3: tag10-tag10, no borrow ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0003, 2'b10);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S03", 5'd3, 32'h0000_0002, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-4: tag10-tag10, borrow -> inferred all-ones upper, 1 cycle.
+    $display("\n---- SUB-4: tag10-tag10, borrow ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b10);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S04", 5'd3, 32'hFFFF_FFFE, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-5: tag10-tag11, no borrow -> upper becomes 1, so 2 cycles.
+    $display("\n---- SUB-5: tag10-tag11, no borrow -> 2 cycles ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S05", 5'd3, 32'h0000_0002, 2'b01, 2, cycles, 32'h0000_0001, 1'b1);
+
+    // SUB-6: tag10-tag11, borrow -> upper remains zero, 1 cycle.
+    $display("\n---- SUB-6: tag10-tag11, borrow ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b10);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S06", 5'd3, 32'hFFFF_FFFE, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-7: tag11-tag10, no borrow -> inferred all-ones upper, 1 cycle.
+    $display("\n---- SUB-7: tag11-tag10, no borrow ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0003, 2'b10);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S07", 5'd3, 32'h0000_0002, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // SUB-8: tag11-tag10, borrow -> upper becomes FFFFFFFE, so 2 cycles.
+    $display("\n---- SUB-8: tag11-tag10, borrow -> 2 cycles ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S08", 5'd3, 32'hFFFF_FFFE, 2'b01, 2, cycles, 32'hFFFF_FFFE, 1'b1);
+
+    // SUB-9: explicit upper source -> 2 cycles, WB derives tag from actual upper zero.
+    $display("\n---- SUB-9: tag01-tag01, upper=0 -> tag 10 ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0005, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S09", 5'd3, 32'h0000_0002, 2'b10, 2, cycles, 32'h0000_0000, 1'b1);
+
+    // SUB-10: explicit upper source with borrow -> WB derives tag from actual upper all-ones.
+    $display("\n---- SUB-10: tag01-tag01, borrow upper=FF -> tag 11 ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b01);
+    inject_instr(SUB_X3_X1_X2, cycles);
+    check_result("S10", 5'd3, 32'hFFFF_FFFE, 2'b11, 2, cycles, 32'hFFFF_FFFF, 1'b1);
+
+    $display("\n==============================");
+    $display("All %0d SUB tests complete", 10);
+    $display("==============================");
+
+
+
+
+    // ==========================================================
+    // AND tests — bitwise, halves independent
+    // ==========================================================
+    $display("\n========== AND tests ==========");
+
+    // AND-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
+    $display("\n---- AND-1: tag00+tag00 ----");
+    write_rf_32(5'd1, 32'hF0F0_F0F0);
+    write_rf_32(5'd2, 32'h0FF0_0FF0);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A01", 5'd3, 32'h00F0_00F0, 2'b00, 1, cycles, 32'h0, 1'b0);
+
+    // AND-2: tag10+tag10 → tag 10 (0 AND 0 = 0)
+    $display("\n---- AND-2: tag10+tag10 ----");
+    write_rf_64(5'd1, 32'h0, 32'hF0F0_F0F0, 2'b10);
+    write_rf_64(5'd2, 32'h0, 32'h0FF0_0FF0, 2'b10);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A02", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // AND-3: tag10+tag11 → tag 10 (0 AND FF = 0)
+    $display("\n---- AND-3: tag10+tag11 ----");
+    write_rf_64(5'd1, 32'h0,         32'hF0F0_F0F0, 2'b10);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A03", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // AND-4: tag11+tag11 → tag 11 (FF AND FF = FF)
+    $display("\n---- AND-4: tag11+tag11 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_F0F0, 2'b11);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A04", 5'd3, 32'h00F0_00F0, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // AND-5: tag01+tag10 → tag 10, 1 cycle (explicit AND 0 = 0; upper read skipped)
+    $display("\n---- AND-5: tag01+tag10 ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
+    write_rf_64(5'd2, 32'h0,         32'h0FF0_0FF0, 2'b10);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A05", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // AND-6: tag01+tag11 → tag 01, 2 cycles (FF AND explicit = explicit)
+    $display("\n---- AND-6: tag01+tag11 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A06", 5'd3, 32'h00F0_00F0, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // AND-7: tag01+tag01 → tag 01, 2 cycles
+    $display("\n---- AND-7: tag01+tag01 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
+    write_rf_64(5'd2, 32'hFF00_FF00, 32'h0FF0_0FF0, 2'b01);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A07", 5'd3, 32'h00F0_00F0, 2'b01, 2, cycles, 32'hAB00_1200, 1'b1);
+
+    // AND-8: tag01+tag01 producing all-ones upper → tag 11
+    $display("\n---- AND-8: tag01+tag01, upper=FF → tag 11 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_F0F0, 2'b01);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b01);
+    inject_instr(AND_X3_X1_X2, cycles);
+    check_result("A08", 5'd3, 32'h00F0_00F0, 2'b11, 2, cycles, 32'hFFFF_FFFF, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d AND tests complete", 8);
+    $display("==============================");
+
+
+
+    // ==========================================================
+    // OR tests — bitwise, halves independent
+    // ==========================================================
+    $display("\n========== OR tests ==========");
+
+    // OR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
+    $display("\n---- OR-1: tag00+tag00 ----");
+    write_rf_32(5'd1, 32'hF0F0_0000);
+    write_rf_32(5'd2, 32'h0000_0F0F);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
+
+    // OR-2: tag10+tag10 → tag 10 (0 OR 0 = 0)
+    $display("\n---- OR-2: tag10+tag10 ----");
+    write_rf_64(5'd1, 32'h0, 32'hF0F0_0000, 2'b10);
+    write_rf_64(5'd2, 32'h0, 32'h0000_0F0F, 2'b10);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O02", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // OR-3: tag11+tag10 → tag 11 (FF OR 0 = FF)
+    $display("\n---- OR-3: tag11+tag10 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
+    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O03", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // OR-4: tag11+tag11 → tag 11 (FF OR FF = FF)
+    $display("\n---- OR-4: tag11+tag11 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O04", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // OR-5: tag01+tag11 → tag 11, 1 cycle (FF forces upper, no explicit read)
+    $display("\n---- OR-5: tag01+tag11 ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O05", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // OR-6: tag01+tag10 → tag 01, 2 cycles (explicit OR 0 = explicit)
+    $display("\n---- OR-6: tag01+tag10 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O06", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // OR-7: tag01+tag01 → tag 01, 2 cycles (general)
+    $display("\n---- OR-7: tag01+tag01 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0F0F, 2'b01);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O07", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hBBFD_567C, 1'b1);
+
+    // OR-8: tag01+tag01 producing all-zero upper → tag 10
+    $display("\n---- OR-8: tag01+tag01, upper=0 → tag 10 ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0F0F, 2'b01);
+    inject_instr(OR_X3_X1_X2, cycles);
+    check_result("O08", 5'd3, 32'hF0F0_0F0F, 2'b10, 2, cycles, 32'h0000_0000, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d OR tests complete", 8);
+    $display("==============================");
+
+
+
+    // ==========================================================
+    // XOR tests — bitwise, halves independent; explicit always 2-cycle
+    // ==========================================================
+    $display("\n========== XOR tests ==========");
+
+    // XOR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
+    $display("\n---- XOR-1: tag00+tag00 ----");
+    write_rf_32(5'd1, 32'hF0F0_0000);
+    write_rf_32(5'd2, 32'h0000_0F0F);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
+
+    // XOR-2: tag10+tag10 → tag 10 (0 XOR 0 = 0)
+    $display("\n---- XOR-2: tag10+tag10 ----");
+    write_rf_64(5'd1, 32'h0, 32'hF0F0_0000, 2'b10);
+    write_rf_64(5'd2, 32'h0, 32'h0000_0F0F, 2'b10);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X02", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // XOR-3: tag11+tag11 → tag 10 (FF XOR FF = 0)
+    $display("\n---- XOR-3: tag11+tag11 → tag 10 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X03", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // XOR-4: tag10+tag11 → tag 11 (0 XOR FF = FF)
+    $display("\n---- XOR-4: tag10+tag11 ----");
+    write_rf_64(5'd1, 32'h0,         32'hF0F0_0000, 2'b10);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X04", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // XOR-5: tag01+tag10 → tag 01, 2 cycles (any explicit forces 2-cycle XOR)
+    $display("\n---- XOR-5: tag01+tag10 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X05", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // XOR-6: tag01+tag11 → tag 01, 2 cycles
+    $display("\n---- XOR-6: tag01+tag11 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X06", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'h5432_EDCB, 1'b1);
+
+    // XOR-7: tag01+tag01 → tag 01, 2 cycles (general)
+    $display("\n---- XOR-7: tag01+tag01 → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
+    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0F0F, 2'b01);
+    inject_instr(XOR_X3_X1_X2, cycles);
+    check_result("X07", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hB9F9_444C, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d XOR tests complete", 7);
+    $display("==============================");
+
+
+
+
+    // ==========================================================
+    // ADDI tests — I-type adder, immediate's tag derived from imm[31]
+    // ==========================================================
+    $display("\n========== ADDI tests ==========");
+
+    // ADDI-1: rs1 tag10 + pos_imm (virtual tag 10), no carry → tag 10
+    $display("\n---- ADDI-1: tag10+pos_imm ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0010, 2'b10);
+    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
+    check_result("AI1", 5'd3, 32'h0000_0015, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // ADDI-2: rs1 tag11 + pos_imm (10), no carry → tag 11 (FF+0+0=FF)
+    $display("\n---- ADDI-2: tag11+pos_imm ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0010, 2'b11);
+    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
+    check_result("AI2", 5'd3, 32'h0000_0015, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ADDI-3: rs1 tag10 + neg_imm (11), carry → tag 10 (0+FF+1=00)
+    $display("\n---- ADDI-3: tag10+neg_imm, carry ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0010, 2'b10);
+    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("AI3", 5'd3, 32'h0000_000F, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // ADDI-4: rs1 tag10 + neg_imm (11), no carry → tag 11 (0+FF+0=FF)
+    $display("\n---- ADDI-4: tag10+neg_imm, no carry ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0000, 2'b10);
+    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("AI4", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ADDI-5: rs1 tag11 + neg_imm (11), no carry → 2 cycles (FF+FF+0=FE, not inferable)
+    $display("\n---- ADDI-5: tag11+neg_imm, no carry → 2 cycles ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0000, 2'b11);
+    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("AI5", 5'd3, 32'hFFFF_FFFF, 2'b01, 2, cycles, 32'hFFFF_FFFE, 1'b1);
+
+    // ADDI-6: rs1 tag01 + pos_imm (10) → 2 cycles (a explicit forces upper read)
+    $display("\n---- ADDI-6: tag01+pos_imm → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_0000, 32'h0000_0010, 2'b01);
+    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
+    check_result("AI6", 5'd3, 32'h0000_0015, 2'b01, 2, cycles, 32'hABCD_0000, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d ADDI tests complete", 6);
+    $display("==============================");
+
+
+
+    // ==========================================================
+    // ANDI tests — I-type bitwise AND
+    // ==========================================================
+    $display("\n========== ANDI tests ==========");
+
+    // ANDI-1: rs1 tag10 + pos_imm (10) → tag 10
+    $display("\n---- ANDI-1: tag10+pos_imm ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_001F, 2'b10);
+    inject_instr(ANDI_X3_X1_POS, cycles);    // imm = +5
+    check_result("NI1", 5'd3, 32'h0000_0005, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // ANDI-2: rs1 tag11 + neg_imm (11) → tag 11 (FF AND FF = FF)
+    $display("\n---- ANDI-2: tag11+neg_imm ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_001F, 2'b11);
+    inject_instr(ANDI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("NI2", 5'd3, 32'h0000_001F, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ANDI-3: rs1 tag01 + pos_imm (10) → tag 10, 1 cycle (zero side forces result)
+    $display("\n---- ANDI-3: tag01+pos_imm → 1 cycle ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_001F, 2'b01);
+    inject_instr(ANDI_X3_X1_POS, cycles);    // imm = +5
+    check_result("NI3", 5'd3, 32'h0000_0005, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // ANDI-4: rs1 tag01 + neg_imm (11) → tag 01, 2 cycles (need explicit upper)
+    $display("\n---- ANDI-4: tag01+neg_imm → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_001F, 2'b01);
+    inject_instr(ANDI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("NI4", 5'd3, 32'h0000_001F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d ANDI tests complete", 4);
+    $display("==============================");
+
+
+
+    // ==========================================================
+    // ORI tests — I-type bitwise OR
+    // ==========================================================
+    $display("\n========== ORI tests ==========");
+
+    // ORI-1: rs1 tag10 + pos_imm (10) → tag 10 (0 OR 0 = 0)
+    $display("\n---- ORI-1: tag10+pos_imm ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
+    inject_instr(ORI_X3_X1_POS, cycles);     // imm = +5
+    check_result("RI1", 5'd3, 32'h0000_0017, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // ORI-2: rs1 tag10 + neg_imm (11) → tag 11 (0 OR FF = FF)
+    $display("\n---- ORI-2: tag10+neg_imm ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
+    inject_instr(ORI_X3_X1_NEG, cycles);     // imm = -1
+    check_result("RI2", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ORI-3: rs1 tag01 + neg_imm (11) → tag 11, 1 cycle (FF forces result)
+    $display("\n---- ORI-3: tag01+neg_imm → 1 cycle ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
+    inject_instr(ORI_X3_X1_NEG, cycles);     // imm = -1
+    check_result("RI3", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ORI-4: rs1 tag01 + pos_imm (10) → tag 01, 2 cycles
+    $display("\n---- ORI-4: tag01+pos_imm → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
+    inject_instr(ORI_X3_X1_POS, cycles);     // imm = +5
+    check_result("RI4", 5'd3, 32'h0000_0017, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d ORI tests complete", 4);
+    $display("==============================");
+
+
+
+
+    // ==========================================================
+    // XORI tests — I-type bitwise XOR
+    // ==========================================================
+    $display("\n========== XORI tests ==========");
+
+    // XORI-1: rs1 tag10 + pos_imm (10) → tag 10 (0 XOR 0 = 0)
+    $display("\n---- XORI-1: tag10+pos_imm ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
+    inject_instr(XORI_X3_X1_POS, cycles);    // imm = +5
+    check_result("XI1", 5'd3, 32'h0000_0017, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // XORI-2: rs1 tag11 + neg_imm (11) → tag 10 (FF XOR FF = 0)
+    $display("\n---- XORI-2: tag11+neg_imm → tag 10 ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0012, 2'b11);
+    inject_instr(XORI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("XI2", 5'd3, 32'hFFFF_FFED, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // XORI-3: rs1 tag10 + neg_imm (11) → tag 11 (0 XOR FF = FF)
+    $display("\n---- XORI-3: tag10+neg_imm → tag 11 ----");
+    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
+    inject_instr(XORI_X3_X1_NEG, cycles);    // imm = -1
+    check_result("XI3", 5'd3, 32'hFFFF_FFED, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // XORI-4: rs1 tag01 + pos_imm (10) → tag 01, 2 cycles (any explicit forces 2-cycle)
+    $display("\n---- XORI-4: tag01+pos_imm → 2 cycles ----");
+    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
+    inject_instr(XORI_X3_X1_POS, cycles);    // imm = +5
+    check_result("XI4", 5'd3, 32'h0000_0017, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
+
+    // ==========================================================
+    // Done
+    // ==========================================================
+    $display("\n==============================");
+    $display("All %0d XORI tests complete", 4);
+    $display("==============================");
+
+
 
     repeat (10) @(posedge clk_i);
     $stop;

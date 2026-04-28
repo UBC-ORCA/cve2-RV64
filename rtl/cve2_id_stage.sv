@@ -252,8 +252,18 @@ module cve2_id_stage #(
   imm_a_sel_e  imm_a_mux_sel;
   imm_b_sel_e  imm_b_mux_sel, imm_b_mux_sel_dec;
 
-  logic is_add_rr;
-  logic need_upper;
+  // ==== Tagged 64-bit execution control ====
+  op_class_e   op_class;
+  logic        op_uses_tagged_path;
+  logic        is_op_or_op_imm;
+  logic [1:0]  tag_a_eff, tag_b_eff, tag_b_raw;
+  logic        need_upper;
+  logic        a_explicit, b_explicit;
+  logic        a_zero, b_zero;
+  logic        a_ones, b_ones;
+  logic        both_00;
+  logic        upper_not_inferable;
+  logic [31:0] imm_b_eff;
 
   // Multiplier Control
   logic        mult_en_id, mult_en_dec;
@@ -425,7 +435,11 @@ module cve2_id_stage #(
       IMM_B_INCR_PC,
       IMM_B_INCR_ADDR})
 
-  assign alu_operand_b = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b : rf_rdata_b_fwd;
+  // For tagged-ALU upper-half cycle, immediate's "upper" is its sign-extension.
+  assign imm_b_eff = (op_uses_tagged_path && (id_fsm_q == MULTI_CYCLE))
+                   ? {32{imm_b[31]}}
+                   : imm_b;
+  assign alu_operand_b = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b_eff : rf_rdata_b_fwd;
 
   /////////////////////////////////////////
   // Multicycle Operation Stage Register //
@@ -443,11 +457,14 @@ module cve2_id_stage #(
 
   assign imd_val_q_ex_o = imd_val_q;
 
-  // Gated carry register: only captures carry during first cycle of 64-bit add
+  // Carry register: captures lower-cycle carry for adder-class 2-cycle ops.
+  // Cleared otherwise so stale carries can't leak into a subsequent op.
   always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
     if (!rst_ni) begin
       carry_in_o <= 1'b0;
-    end else if (is_add_rr && instr_executing_spec && id_fsm_q == FIRST_CYCLE) begin
+    end else if ((op_class == OP_CLASS_ADDER) &&
+                 instr_executing_spec &&
+                 (id_fsm_q == FIRST_CYCLE)) begin
       carry_in_o <= carry_out_i;
     end else begin
       carry_in_o <= 1'b0;
@@ -622,60 +639,129 @@ module cve2_id_stage #(
   assign mult_en_id      = instr_executing ? mult_en_dec                     : 1'b0;
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
-  assign is_add_rr        = (instr_rdata_alu_i[6:0]   == 7'b0110011) &&  // OPCODE_OP
-                            (instr_rdata_alu_i[14:12] == 3'b000)     &&  // funct3
-                            (instr_rdata_alu_i[31:25] == 7'b0000000);    // funct7
-
   // =========================================================================
-  // CHANGE 2: Tag-based need_upper logic
+  // Op classification — drives FSM, forwarding mux, tag derivation
   // =========================================================================
-  logic a_explicit;
-  logic b_explicit;
-  logic a_zero;
-  logic b_zero;
-  logic a_ones;
-  logic b_ones;
-  logic both_00;
-  // 2 cycles needed when:
-  //   - either source has explicit upper (tag 01, must read RF)
-  //   - both uppers zero + carry (except pure 32-bit both_00)
-  //   - both uppers ones + no carry (FF+FF=FE, not inferable)
-  logic upper_not_inferable;
+  // Only OPCODE_OP (R-type) and OPCODE_OP_IMM (I-type) are eligible. Other
+  // opcodes (LOAD/STORE/BRANCH/JAL/JALR/AUIPC/LUI) also use ALU_ADD but for
+  // address calculation — they MUST NOT enter the tagged path.
+  assign is_op_or_op_imm = (instr_rdata_alu_i[6:0] == 7'b0110011) ||  // OPCODE_OP
+                           (instr_rdata_alu_i[6:0] == 7'b0010011);    // OPCODE_OP_IMM
 
   always_comb begin
-    a_explicit = (r_a_tag_i == 2'b01);
-    b_explicit = (r_b_tag_i == 2'b01);
-    a_zero     = (r_a_tag_i == 2'b00) || (r_a_tag_i == 2'b10);
-    b_zero     = (r_b_tag_i == 2'b00) || (r_b_tag_i == 2'b10);
-    a_ones     = (r_a_tag_i == 2'b11);
-    b_ones     = (r_b_tag_i == 2'b11);
-    both_00    = (r_a_tag_i == 2'b00) && (r_b_tag_i == 2'b00);
-    upper_not_inferable = (a_zero && b_zero && carry_out_i && !both_00) ||
-                             (a_ones && b_ones && !carry_out_i);
+    op_class = OP_CLASS_NONE;
+    if (is_op_or_op_imm) begin
+      unique case (alu_operator)
+        ALU_ADD, ALU_SUB:         op_class = OP_CLASS_ADDER;
+        ALU_AND, ALU_OR, ALU_XOR: op_class = OP_CLASS_BITWISE;
+        // SLT/SLTU/SLL/SRL/SRA:   deferred to mechanisms 2, 3
+        default:                   op_class = OP_CLASS_NONE;
+      endcase
+    end
   end
 
-  assign need_upper = a_explicit || b_explicit || upper_not_inferable;
+  assign op_uses_tagged_path = (op_class != OP_CLASS_NONE);
 
   // =========================================================================
-  // CHANGE 4: Destination tag for 1-cycle adds
+  // Effective operand tags
   // =========================================================================
-  // For 2-cycle adds, WB overwrites this from the actual upper result data.
+  // tag_b_raw: B's tag from RF, or virtual tag from immediate's sign bit.
+  // tag_b_eff: apply SUB upper-half negation swap (no-op for ADD/AND/OR/XOR).
+  assign tag_b_raw = (alu_op_b_mux_sel == OP_B_IMM)
+                   ? (imm_b[31] ? 2'b11 : 2'b10)
+                   : r_b_tag_i;
+
+  assign tag_a_eff = r_a_tag_i;
+
   always_comb begin
-    if (!is_add_rr) begin
-      w_tag_id_o = 2'b00;                                       // non-add: 32-bit
-    end else if (both_00) begin
-      w_tag_id_o = 2'b00;                                       // pure RV32
-    end else if (a_zero && b_zero && !carry_out_i) begin
-      w_tag_id_o = 2'b10;                                       // 0+0+0 = 0
-    end else if ((a_ones ^ b_ones) && !carry_out_i) begin
-      w_tag_id_o = 2'b11;                                       // 0+FF+0 = FF
-    end else if ((a_ones ^ b_ones) && carry_out_i) begin
-      w_tag_id_o = 2'b10;                                       // 0+FF+1 = 00
-    end else if (a_ones && b_ones && carry_out_i) begin
-      w_tag_id_o = 2'b11;                                       // FF+FF+1 = FF
+    if (alu_operator == ALU_SUB) begin
+      case (tag_b_raw)
+        2'b00,
+        2'b10:   tag_b_eff = 2'b11;
+        2'b11:   tag_b_eff = 2'b10;
+        default: tag_b_eff = tag_b_raw;
+      endcase
     end else begin
-      w_tag_id_o = 2'b01;                                       // not inferable (2-cycle)
+      tag_b_eff = tag_b_raw;
     end
+  end
+
+  // =========================================================================
+  // Predicates shared by need_upper and dest-tag derivation
+  // =========================================================================
+  always_comb begin
+    a_explicit          = (tag_a_eff == 2'b01);
+    b_explicit          = (tag_b_eff == 2'b01);
+    a_zero              = (tag_a_eff == 2'b00) || (tag_a_eff == 2'b10);
+    b_zero              = (tag_b_eff == 2'b00) || (tag_b_eff == 2'b10);
+    a_ones              = (tag_a_eff == 2'b11);
+    b_ones              = (tag_b_eff == 2'b11);
+    both_00             = (tag_a_eff == 2'b00) && (tag_b_raw == 2'b00);
+    upper_not_inferable = (a_zero && b_zero && carry_out_i && !both_00) ||
+                          (a_ones && b_ones && !carry_out_i);
+  end
+
+  // =========================================================================
+  // need_upper: 1 = 2-cycle execution required
+  // =========================================================================
+  always_comb begin
+    need_upper = 1'b0;
+    unique case (op_class)
+      OP_CLASS_ADDER: begin
+        need_upper = a_explicit || b_explicit || upper_not_inferable;
+      end
+      OP_CLASS_BITWISE: begin
+        case (alu_operator)
+          ALU_AND: need_upper = (a_explicit && !b_zero) || (b_explicit && !a_zero);
+          ALU_OR:  need_upper = (a_explicit && !b_ones) || (b_explicit && !a_ones);
+          ALU_XOR: need_upper =  a_explicit ||  b_explicit;
+          default: need_upper = 1'b0;
+        endcase
+      end
+      default: need_upper = 1'b0;
+    endcase
+  end
+
+  // =========================================================================
+  // Destination tag for 1-cycle results.
+  // For 2-cycle results, WB overwrites this from actual upper data.
+  // =========================================================================
+  always_comb begin
+    w_tag_id_o = 2'b00;
+    unique case (op_class)
+      OP_CLASS_ADDER: begin
+        if      (both_00)                               w_tag_id_o = 2'b00;
+        else if (a_zero && b_zero && !carry_out_i)      w_tag_id_o = 2'b10; // 0+0+0=0
+        else if ((a_ones ^ b_ones) && !carry_out_i)     w_tag_id_o = 2'b11; // 0+FF+0=FF
+        else if ((a_ones ^ b_ones) &&  carry_out_i)     w_tag_id_o = 2'b10; // 0+FF+1=00
+        else if (a_ones && b_ones && carry_out_i)       w_tag_id_o = 2'b11; // FF+FF+1=FF
+        else                                             w_tag_id_o = 2'b01; // 2-cycle path
+      end
+      OP_CLASS_BITWISE: begin
+        case (alu_operator)
+          ALU_AND: begin
+            if      (both_00)                  w_tag_id_o = 2'b00;
+            else if (a_zero || b_zero)         w_tag_id_o = 2'b10;
+            else if (a_ones && b_ones)         w_tag_id_o = 2'b11;
+            else                               w_tag_id_o = 2'b01;
+          end
+          ALU_OR: begin
+            if      (both_00)                  w_tag_id_o = 2'b00;
+            else if (a_ones || b_ones)         w_tag_id_o = 2'b11;
+            else if (a_zero && b_zero)         w_tag_id_o = 2'b10;
+            else                               w_tag_id_o = 2'b01;
+          end
+          ALU_XOR: begin
+            if      (both_00)                  w_tag_id_o = 2'b00;
+            else if (a_explicit || b_explicit) w_tag_id_o = 2'b01;
+            else if (a_zero == b_zero)         w_tag_id_o = 2'b10; // 0^0 or FF^FF
+            else                               w_tag_id_o = 2'b11; // 0^FF
+          end
+          default: w_tag_id_o = 2'b00;
+        endcase
+      end
+      default: w_tag_id_o = 2'b00;
+    endcase
   end
 
   assign lsu_req_o               = lsu_req;
@@ -770,12 +856,12 @@ module cve2_id_stage #(
               stall_jump    = 1'b1;
               jump_set_raw  = jump_set_dec;
             end
-            is_add_rr: begin
+            op_uses_tagged_path: begin
               if (need_upper) begin
                 id_fsm_d  = MULTI_CYCLE;
-                stall_alu  = 1'b1;
+                stall_alu = 1'b1;
               end
-              // else: 1-cycle add, stays in FIRST_CYCLE
+              // else: 1-cycle, stays in FIRST_CYCLE
             end
             alu_multicycle_dec: begin
               stall_alu     = 1'b1;
@@ -809,10 +895,10 @@ module cve2_id_stage #(
         end
 
         MULTI_CYCLE: begin
-            if (is_add_rr) begin
-              id_fsm_d  = FIRST_CYCLE;
-              r_a_upper_o = 1'b1;
-              r_b_upper_o = 1'b1;
+            if (op_uses_tagged_path) begin
+              id_fsm_d        = FIRST_CYCLE;
+              r_a_upper_o     = 1'b1;
+              r_b_upper_o     = (alu_op_b_mux_sel != OP_B_IMM); // I-type: B is imm, no RF read
               rf_w_upper_id_o = 1'b1;
             end else begin
               if (multdiv_en_dec) begin
@@ -860,18 +946,20 @@ module cve2_id_stage #(
   `ASSERT(IbexStallIfValidInstrNotExecuting,
     instr_valid_i & ~instr_fetch_err_i & ~instr_executing & controller_run |-> stall_id)
 
-  // =========================================================================
-  // CHANGE 3: Forwarding mux with upper-half inference
+    // =========================================================================
+  // Forwarding mux — substitutes inferred upper for non-explicit tags during
+  // the upper-half cycle of any tagged ALU op.
   // =========================================================================
   always_comb begin
-    if (is_add_rr && (id_fsm_q == MULTI_CYCLE)) begin
-      // Upper-half cycle: substitute inferred values for non-explicit tags
-      case (r_a_tag_i)
-        2'b00, 2'b10: rf_rdata_a_fwd = 32'h0000_0000;   // tag 00 or 10: upper is zero
-        2'b11:        rf_rdata_a_fwd = 32'hFFFF_FFFF;    // tag 11: upper is all-ones
-        default:      rf_rdata_a_fwd = rf_rdata_a_i;      // tag 01: read from RF
+    if (op_uses_tagged_path && (id_fsm_q == MULTI_CYCLE)) begin
+      case (tag_a_eff)
+        2'b00, 2'b10: rf_rdata_a_fwd = 32'h0000_0000;
+        2'b11:        rf_rdata_a_fwd = 32'hFFFF_FFFF;
+        default:      rf_rdata_a_fwd = rf_rdata_a_i;
       endcase
-      case (r_b_tag_i)
+      // For B, use tag_b_raw (not eff) — forwarding mux delivers the actual
+      // register upper; SUB's negation happens inside the ALU's negate path.
+      case (tag_b_raw)
         2'b00, 2'b10: rf_rdata_b_fwd = 32'h0000_0000;
         2'b11:        rf_rdata_b_fwd = 32'hFFFF_FFFF;
         default:      rf_rdata_b_fwd = rf_rdata_b_i;
@@ -939,7 +1027,7 @@ module cve2_id_stage #(
       instr_valid_i && !(illegal_c_insn_i || instr_fetch_err_i))
 
   `ASSERT(IbexMulticycleEnableUnique,
-      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec, (is_add_rr && need_upper)}))
+      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec, (op_uses_tagged_path && need_upper)}))
 
   `ASSERT(CVE2DuplicateInstrMatch, instr_valid_i |-> instr_rdata_i === instr_rdata_alu_i)
 

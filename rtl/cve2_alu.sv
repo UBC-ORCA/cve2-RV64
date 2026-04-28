@@ -39,6 +39,7 @@ module cve2_alu #(
 
   logic [31:0] operand_a_rev;
   logic [32:0] operand_b_neg;
+  logic        operand_b_neg_carry;
 
   // bit reverse operand_a for left shifts and bit counting
   for (genvar k = 0; k < 32; k++) begin : gen_rev_operand_a
@@ -96,7 +97,10 @@ module cve2_alu #(
   end
 
   // prepare operand b
-  assign operand_b_neg = {operand_b_i,1'b0} ^ {33{1'b1}};
+  // SUB's upper half uses the saved lower carry to propagate borrow.
+  assign operand_b_neg_carry = (operator_i == ALU_SUB && !instr_first_cycle_i) ?
+                               carry_in_i : 1'b1;
+  assign operand_b_neg = {~operand_b_i, operand_b_neg_carry};
   always_comb begin
     unique case (1'b1)
       multdiv_sel_i:     adder_in_b = multdiv_operand_b_i;

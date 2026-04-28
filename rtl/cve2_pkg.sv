@@ -178,6 +178,21 @@ package cve2_pkg;
     ALU_CRC32C_W
   } alu_op_e;
 
+  /////////////////////
+  // ALU Op Classes  //
+  /////////////////////
+  // Categorizes ALU ops for tagged 64-bit execution. Each class has its own
+  // need_upper / dest_tag rules; the FSM and forwarding mux are shared.
+  // COMPARE / SHIFT / PCADD reserved for mechanisms 2/3/5; not yet wired up.
+  typedef enum logic [2:0] {
+    OP_CLASS_NONE,      // ops outside the tagged path
+    OP_CLASS_ADDER,     // ADD, SUB
+    OP_CLASS_BITWISE,   // AND, OR, XOR
+    OP_CLASS_COMPARE,   // SLT, SLTU, branches  (reserved)
+    OP_CLASS_SHIFT,     // SLL, SRL, SRA        (reserved)
+    OP_CLASS_PCADD      // AUIPC, JAL, JALR     (reserved)
+  } op_class_e;
+
   typedef enum logic [1:0] {
     // Multiplier/divider
     MD_OP_MULL,
