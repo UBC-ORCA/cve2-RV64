@@ -267,6 +267,7 @@ module testbench;
   // LSU writeback path
   logic [31:0] rf_wdata_lsu_i;
   logic [1:0]  rf_wdata_lsu_tag_i;
+  logic        rf_wdata_lsu_upper_i;
   logic        rf_we_lsu_i;
 
   // --------------------
@@ -488,6 +489,7 @@ module testbench;
 
     .lsu_rdata_o      (rf_wdata_lsu_i),
     .lsu_rdata_tag_o  (rf_wdata_lsu_tag_i),
+    .lsu_rdata_upper_o(rf_wdata_lsu_upper_i),
     .lsu_rdata_valid_o(rf_we_lsu_i),
     .lsu_req_i        (lsu_req_o),
 
@@ -527,6 +529,7 @@ module testbench;
     .rf_wdata_lsu_i(rf_wdata_lsu_i),
     .rf_we_lsu_i   (rf_we_lsu_i),
     .rf_wdata_lsu_tag_i(rf_wdata_lsu_tag_i),
+    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper_i),
 
     .rf_waddr_wb_o(rf_waddr_wb_o),
     .rf_wdata_wb_o(rf_wdata_wb_o),
@@ -681,6 +684,8 @@ module testbench;
   localparam logic [31:0] LBU_X3_0_X1    = 32'h0000c183;  // LBU x3, 0(x1)
   localparam logic [31:0] LHU_X3_0_X1    = 32'h0000d183;  // LHU x3, 0(x1)
   localparam logic [31:0] LWU_X3_0_X1    = 32'h0000e183;  // LWU x3, 0(x1)
+  localparam logic [31:0] LD_X3_0_X1     = 32'h0000b183;  // LD  x3, 0(x1)
+  localparam logic [31:0] SD_X2_0_X1     = 32'h0020b023;  // SD  x2, 0(x1)
   localparam logic [31:0] SLT_X3_X1_X2   = 32'h0020a1b3;  // SLT  x3, x1, x2
   localparam logic [31:0] SLTU_X3_X1_X2  = 32'h0020b1b3;  // SLTU x3, x1, x2
   localparam logic [31:0] SLTI_X3_X1_NEG = 32'hfff0a193;  // SLTI  x3, x1, -1
@@ -691,6 +696,15 @@ module testbench;
   localparam logic [31:0] BGE_X1_X2      = 32'h0020d463;  // BGE  x1, x2, +8
   localparam logic [31:0] BLTU_X1_X2     = 32'h0020e463;  // BLTU x1, x2, +8
   localparam logic [31:0] BGEU_X1_X2     = 32'h0020f463;  // BGEU x1, x2, +8
+  localparam logic [31:0] ADDIW_X3_X1_NEG = 32'hfff0819b; // ADDIW x3, x1, -1
+  localparam logic [31:0] SLLIW_X3_X1_1   = 32'h0010919b; // SLLIW x3, x1, 1
+  localparam logic [31:0] SRLIW_X3_X1_1   = 32'h0010d19b; // SRLIW x3, x1, 1
+  localparam logic [31:0] SRAIW_X3_X1_1   = 32'h4010d19b; // SRAIW x3, x1, 1
+  localparam logic [31:0] ADDW_X3_X1_X2   = 32'h002081bb; // ADDW x3, x1, x2
+  localparam logic [31:0] SUBW_X3_X1_X2   = 32'h402081bb; // SUBW x3, x1, x2
+  localparam logic [31:0] SLLW_X3_X1_X2   = 32'h002091bb; // SLLW x3, x1, x2
+  localparam logic [31:0] SRLW_X3_X1_X2   = 32'h0020d1bb; // SRLW x3, x1, x2
+  localparam logic [31:0] SRAW_X3_X1_X2   = 32'h4020d1bb; // SRAW x3, x1, x2
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -739,6 +753,94 @@ module testbench;
     @(posedge clk_i);
     #1;
     cycles_taken  = 2;
+    data_rvalid_i = 1'b0;
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    data_rdata_i      = 32'h0000_0000;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_ld(input  logic [31:0]  encoding,
+                           input  logic [31:0]  lower_word,
+                           input  logic [31:0]  upper_word,
+                           output int unsigned  cycles_taken);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    data_rvalid_i     = 1'b0;
+    data_rdata_i      = 32'h0000_0000;
+
+    // First cycle issues the lower-word request.
+    @(posedge clk_i);
+    #1;
+    data_rdata_i  = lower_word;
+    data_rvalid_i = 1'b1;
+
+    // Second cycle writes the lower half and issues the upper-word request.
+    @(posedge clk_i);
+    #1;
+    data_rdata_i  = upper_word;
+    data_rvalid_i = 1'b1;
+
+    // Third cycle writes the upper half and finalizes the tag.
+    @(posedge clk_i);
+    #1;
+    cycles_taken  = 3;
+    data_rvalid_i = 1'b0;
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    data_rdata_i      = 32'h0000_0000;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_sd(input  logic [31:0]  encoding,
+                           output int unsigned  cycles_taken,
+                           output logic [31:0]  lower_addr,
+                           output logic [31:0]  lower_wdata,
+                           output logic [3:0]   lower_be,
+                           output logic [31:0]  upper_addr,
+                           output logic [31:0]  upper_wdata,
+                           output logic [3:0]   upper_be);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    data_rvalid_i     = 1'b0;
+    data_rdata_i      = 32'h0000_0000;
+    #1;
+    lower_addr  = data_addr_o;
+    lower_wdata = data_wdata_o;
+    lower_be    = data_be_o;
+
+    // First cycle accepts the lower-word store.
+    @(posedge clk_i);
+    #1;
+    data_rvalid_i = 1'b1;
+    #1;
+    upper_addr  = data_addr_o;
+    upper_wdata = data_wdata_o;
+    upper_be    = data_be_o;
+
+    // Second cycle accepts the first response while issuing the upper-word store.
+    @(posedge clk_i);
+    #1;
+    data_rvalid_i = 1'b0;
+    #1;
+    data_rvalid_i = 1'b1;
+
+    // Third cycle accepts the upper-word response and finishes the store.
+    @(posedge clk_i);
+    #1;
+    cycles_taken  = 3;
     data_rvalid_i = 1'b0;
 
     instr_valid_i     = 1'b0;
@@ -830,10 +932,85 @@ module testbench;
     end
   endtask
 
+  task automatic check_sd_result(input string       test_name,
+                                 input logic [31:0] exp_lower,
+                                 input logic [31:0] exp_upper,
+                                 input logic [31:0] lower_addr,
+                                 input logic [31:0] lower_wdata,
+                                 input logic [3:0]  lower_be,
+                                 input logic [31:0] upper_addr,
+                                 input logic [31:0] upper_wdata,
+                                 input logic [3:0]  upper_be,
+                                 input int unsigned exp_cycles,
+                                 input int unsigned actual_cycles);
+    logic pass;
+    pass = 1'b1;
+
+    if (lower_addr !== 32'h0000_0000) begin
+      $error("%s FAIL: lower store addr = %08h, expected 00000000", test_name, lower_addr);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: lower store addr = %08h", test_name, lower_addr);
+    end
+
+    if (upper_addr !== 32'h0000_0004) begin
+      $error("%s FAIL: upper store addr = %08h, expected 00000004", test_name, upper_addr);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: upper store addr = %08h", test_name, upper_addr);
+    end
+
+    if (lower_wdata !== exp_lower) begin
+      $error("%s FAIL: lower store data = %08h, expected %08h", test_name, lower_wdata, exp_lower);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: lower store data = %08h", test_name, lower_wdata);
+    end
+
+    if (upper_wdata !== exp_upper) begin
+      $error("%s FAIL: upper store data = %08h, expected %08h", test_name, upper_wdata, exp_upper);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: upper store data = %08h", test_name, upper_wdata);
+    end
+
+    if (lower_be !== 4'b1111) begin
+      $error("%s FAIL: lower byte enable = %04b, expected 1111", test_name, lower_be);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: lower byte enable = %04b", test_name, lower_be);
+    end
+
+    if (upper_be !== 4'b1111) begin
+      $error("%s FAIL: upper byte enable = %04b, expected 1111", test_name, upper_be);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: upper byte enable = %04b", test_name, upper_be);
+    end
+
+    if (actual_cycles !== exp_cycles) begin
+      $error("%s FAIL: cycles = %0d, expected %0d", test_name, actual_cycles, exp_cycles);
+      pass = 1'b0;
+    end else begin
+      $display("%s PASS: cycles = %0d", test_name, actual_cycles);
+    end
+
+    if (pass)
+      $display("%s: ALL CHECKS PASSED", test_name);
+    else
+      $display("%s: SOME CHECKS FAILED", test_name);
+  endtask
+
   // --------------------
   // Main test stimulus
   // --------------------
   int unsigned cycles;
+  logic [31:0] sd_lower_addr;
+  logic [31:0] sd_lower_wdata;
+  logic [3:0]  sd_lower_be;
+  logic [31:0] sd_upper_addr;
+  logic [31:0] sd_upper_wdata;
+  logic [3:0]  sd_upper_be;
 
   initial begin
     // Wait for reset release
@@ -1594,6 +1771,68 @@ module testbench;
     $display("All %0d BRANCH compare tests complete", 6);
     $display("==============================");
 
+    // ==========================================================
+    // W-variant tests
+    // ==========================================================
+    $display("\n========== W-variant tests ==========");
+
+    // ADDIW wraps to 32 bits and sign-extends bit 31 into the tag.
+    $display("\n---- W-1: ADDIW 0 + -1 -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h0000_0000, 2'b01);
+    inject_instr(ADDIW_X3_X1_NEG, cycles);
+    check_result("W01", 5'd3, 32'hffff_ffff, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // ADDW ignores source upper halves and sign-extends the 32-bit wrapped result.
+    $display("\n---- W-2: ADDW overflow -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h7fff_ffff, 2'b01);
+    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0001, 2'b01);
+    inject_instr(ADDW_X3_X1_X2, cycles);
+    check_result("W02", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    // SUBW underflow likewise wraps in 32 bits and sign-extends.
+    $display("\n---- W-3: SUBW underflow -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0001, 2'b01);
+    inject_instr(SUBW_X3_X1_X2, cycles);
+    check_result("W03", 5'd3, 32'hffff_ffff, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-4: SLLIW sets sign bit -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h4000_0000, 2'b01);
+    inject_instr(SLLIW_X3_X1_1, cycles);
+    check_result("W04", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-5: SRLIW clears sign bit -> tag 10 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
+    inject_instr(SRLIW_X3_X1_1, cycles);
+    check_result("W05", 5'd3, 32'h4000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-6: SRAIW preserves sign bit -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
+    inject_instr(SRAIW_X3_X1_1, cycles);
+    check_result("W06", 5'd3, 32'hc000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-7: SLLW uses lower shamt only -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h4000_0000, 2'b01);
+    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
+    inject_instr(SLLW_X3_X1_X2, cycles);
+    check_result("W07", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-8: SRLW uses lower shamt only -> tag 10 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
+    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
+    inject_instr(SRLW_X3_X1_X2, cycles);
+    check_result("W08", 5'd3, 32'h4000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- W-9: SRAW uses lower shamt only -> tag 11 ----");
+    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
+    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
+    inject_instr(SRAW_X3_X1_X2, cycles);
+    check_result("W09", 5'd3, 32'hc000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n==============================");
+    $display("All %0d W-variant tests complete", 9);
+    $display("==============================");
+
 
     // ==========================================================
     // LOAD tag tests
@@ -1648,6 +1887,61 @@ module testbench;
 
     $display("\n==============================");
     $display("All %0d LOAD tag tests complete", 9);
+    $display("==============================");
+
+    // ==========================================================
+    // LD/SD tests
+    // ==========================================================
+    $display("\n========== LD/SD tests ==========");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
+
+    // LD writes lower first, then upper. Upper zero is compressed as tag 10.
+    $display("\n---- LD-1: upper zero -> tag 10 ----");
+    inject_ld(LD_X3_0_X1, 32'h89ab_cdef, 32'h0000_0000, cycles);
+    check_result("D01", 5'd3, 32'h89ab_cdef, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
+
+    // Upper all ones is compressed as tag 11.
+    $display("\n---- LD-2: upper ones -> tag 11 ----");
+    inject_ld(LD_X3_0_X1, 32'h0123_4567, 32'hffff_ffff, cycles);
+    check_result("D02", 5'd3, 32'h0123_4567, 2'b11, 3, cycles, 32'hffff_ffff, 1'b1);
+
+    // General upper word remains explicit.
+    $display("\n---- LD-3: explicit upper -> tag 01 ----");
+    inject_ld(LD_X3_0_X1, 32'hfeed_beef, 32'h1234_5678, cycles);
+    check_result("D03", 5'd3, 32'hfeed_beef, 2'b01, 3, cycles, 32'h1234_5678, 1'b1);
+
+    // SD with zero-inferred upper stores zero as the second word.
+    $display("\n---- SD-1: tag10 stores inferred upper zero ----");
+    write_rf_64(5'd2, 32'h0000_0000, 32'hcafe_babe, 2'b10);
+    inject_sd(SD_X2_0_X1, cycles,
+              sd_lower_addr, sd_lower_wdata, sd_lower_be,
+              sd_upper_addr, sd_upper_wdata, sd_upper_be);
+    check_sd_result("D04", 32'hcafe_babe, 32'h0000_0000,
+                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
+                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
+
+    // SD with ones-inferred upper stores all ones as the second word.
+    $display("\n---- SD-2: tag11 stores inferred upper ones ----");
+    write_rf_64(5'd2, 32'hffff_ffff, 32'h1357_9bdf, 2'b11);
+    inject_sd(SD_X2_0_X1, cycles,
+              sd_lower_addr, sd_lower_wdata, sd_lower_be,
+              sd_upper_addr, sd_upper_wdata, sd_upper_be);
+    check_sd_result("D05", 32'h1357_9bdf, 32'hffff_ffff,
+                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
+                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
+
+    // SD with explicit upper reads the upper RF bank for the second word.
+    $display("\n---- SD-3: tag01 stores explicit upper ----");
+    write_rf_64(5'd2, 32'h1234_5678, 32'h0bad_f00d, 2'b01);
+    inject_sd(SD_X2_0_X1, cycles,
+              sd_lower_addr, sd_lower_wdata, sd_lower_be,
+              sd_upper_addr, sd_upper_wdata, sd_upper_be);
+    check_sd_result("D06", 32'h0bad_f00d, 32'h1234_5678,
+                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
+                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
+
+    $display("\n==============================");
+    $display("All %0d LD/SD tests complete", 6);
     $display("==============================");
 
 

@@ -307,6 +307,7 @@ module cve2_decoder #(
           2'b00:   data_type_o  = 2'b10; // sb
           2'b01:   data_type_o  = 2'b01; // sh
           2'b10:   data_type_o  = 2'b00; // sw
+          2'b11:   data_type_o  = 2'b11; // sd
           default: illegal_insn = 1'b1;
         endcase
       end
@@ -325,6 +326,12 @@ module cve2_decoder #(
           2'b01: data_type_o = 2'b01; // lh(u)
           2'b10: begin
             data_type_o = 2'b00;      // lw/lwu
+          end
+          2'b11: begin
+            data_type_o = 2'b11;      // ld
+            if (instr[14]) begin
+              illegal_insn = 1'b1;
+            end
           end
           default: begin
             illegal_insn = 1'b1;
@@ -443,6 +450,24 @@ module cve2_decoder #(
         endcase
       end
 
+      OPCODE_OP_IMM_32: begin // RV64I word-immediate ALU operations
+        rf_ren_a_o       = 1'b1;
+        rf_we            = 1'b1;
+
+        unique case (instr[14:12])
+          3'b000: illegal_insn = 1'b0; // addiw
+          3'b001: illegal_insn = (instr[31:25] == 7'b000_0000) ? 1'b0 : 1'b1; // slliw
+          3'b101: begin
+            unique case (instr[31:25])
+              7'b000_0000, // srliw
+              7'b010_0000: illegal_insn = 1'b0; // sraiw
+              default:     illegal_insn = 1'b1;
+            endcase
+          end
+          default: illegal_insn = 1'b1;
+        endcase
+      end
+
       OPCODE_OP: begin  // Register-Register ALU operation
         rf_ren_a_o      = 1'b1;
         rf_ren_b_o      = 1'b1;
@@ -553,6 +578,21 @@ module cve2_decoder #(
             end
           endcase
         end
+      end
+
+      OPCODE_OP_32: begin // RV64I word register-register ALU operations
+        rf_ren_a_o      = 1'b1;
+        rf_ren_b_o      = 1'b1;
+        rf_we           = 1'b1;
+
+        unique case ({instr[31:25], instr[14:12]})
+          {7'b000_0000, 3'b000}, // addw
+          {7'b010_0000, 3'b000}, // subw
+          {7'b000_0000, 3'b001}, // sllw
+          {7'b000_0000, 3'b101}, // srlw
+          {7'b010_0000, 3'b101}: illegal_insn = 1'b0; // sraw
+          default: illegal_insn = 1'b1;
+        endcase
       end
 
       /////////////
@@ -925,6 +965,25 @@ module cve2_decoder #(
         endcase
       end
 
+      OPCODE_OP_IMM_32: begin // RV64I word-immediate ALU operations
+        alu_op_a_mux_sel_o  = OP_A_REG_A;
+        alu_op_b_mux_sel_o  = OP_B_IMM;
+        imm_b_mux_sel_o     = IMM_B_I;
+
+        unique case (instr_alu[14:12])
+          3'b000: alu_operator_o = ALU_ADD; // addiw
+          3'b001: alu_operator_o = ALU_SLL; // slliw
+          3'b101: begin
+            if (instr_alu[31:25] == 7'b010_0000) begin
+              alu_operator_o = ALU_SRA;     // sraiw
+            end else begin
+              alu_operator_o = ALU_SRL;     // srliw
+            end
+          end
+          default: ;
+        endcase
+      end
+
       OPCODE_OP: begin  // Register-Register ALU operation
         alu_op_a_mux_sel_o = OP_A_REG_A;
         alu_op_b_mux_sel_o = OP_B_REG_B;
@@ -1113,6 +1172,20 @@ module cve2_decoder #(
             default: ;
           endcase
         end
+      end
+
+      OPCODE_OP_32: begin // RV64I word register-register ALU operations
+        alu_op_a_mux_sel_o = OP_A_REG_A;
+        alu_op_b_mux_sel_o = OP_B_REG_B;
+
+        unique case ({instr_alu[31:25], instr_alu[14:12]})
+          {7'b000_0000, 3'b000}: alu_operator_o = ALU_ADD; // addw
+          {7'b010_0000, 3'b000}: alu_operator_o = ALU_SUB; // subw
+          {7'b000_0000, 3'b001}: alu_operator_o = ALU_SLL; // sllw
+          {7'b000_0000, 3'b101}: alu_operator_o = ALU_SRL; // srlw
+          {7'b010_0000, 3'b101}: alu_operator_o = ALU_SRA; // sraw
+          default: ;
+        endcase
       end
 
       /////////////

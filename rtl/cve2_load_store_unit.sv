@@ -41,6 +41,7 @@ module cve2_load_store_unit
 
   output logic [31:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
   output logic [1:0]   lsu_rdata_tag_o,
+  output logic         lsu_rdata_upper_o,
   output logic         lsu_rdata_valid_o,
   input  logic         lsu_req_i,            // data request                     -> from ID/EX
 
@@ -89,10 +90,14 @@ module cve2_load_store_unit
   logic [31:0]  rdata_b_ext; // sign extension for bytes
 
   logic         split_misaligned_access;
+  logic         dword_access;
+  logic         dword_misaligned;
+  logic         dword_lower_rvalid;
   logic         handle_misaligned_q, handle_misaligned_d; // high after receiving grant for first
                                                           // part of a misaligned access
   logic         pmp_err_q, pmp_err_d;
   logic         lsu_err_q, lsu_err_d;
+  logic         misaligned_err_q, misaligned_err_d;
   logic         data_or_pmp_err;
 
   typedef enum logic [2:0]  {
@@ -110,7 +115,7 @@ module cve2_load_store_unit
   ///////////////////
 
   always_comb begin
-    unique case (lsu_type_i) // Data type 00 Word, 01 Half word, 11,10 byte
+    unique case (lsu_type_i) // Data type 00 Word, 01 Half word, 10 byte, 11 doubleword
       2'b00: begin // Writing a word
         if (!handle_misaligned_q) begin // first part of potentially misaligned transaction
           unique case (data_offset)
@@ -145,8 +150,7 @@ module cve2_load_store_unit
         end
       end
 
-      2'b10,
-      2'b11: begin // Writing a byte
+      2'b10: begin // Writing a byte
         unique case (data_offset)
           2'b00:   data_be = 4'b0001;
           2'b01:   data_be = 4'b0010;
@@ -154,6 +158,10 @@ module cve2_load_store_unit
           2'b11:   data_be = 4'b1000;
           default: data_be = 4'b1111;
         endcase // case (data_offset)
+      end
+
+      2'b11: begin // Writing one 32-bit beat of a doubleword
+        data_be = 4'b1111;
       end
 
       default:     data_be = 4'b1111;
@@ -316,7 +324,8 @@ module cve2_load_store_unit
     unique case (data_type_q)
       2'b00:       data_rdata_ext = rdata_w_ext;
       2'b01:       data_rdata_ext = rdata_h_ext;
-      2'b10,2'b11: data_rdata_ext = rdata_b_ext;
+      2'b10:       data_rdata_ext = rdata_b_ext;
+      2'b11:       data_rdata_ext = rdata_w_ext;
       default:     data_rdata_ext = rdata_w_ext;
     endcase // case (data_type_q)
   end
@@ -326,9 +335,13 @@ module cve2_load_store_unit
   /////////////
 
   // check for misaligned accesses that need to be split into two word-aligned accesses
+  assign dword_access     = (lsu_type_i == 2'b11);
+  assign dword_misaligned = dword_access && (data_offset != 2'b00);
+
   assign split_misaligned_access =
       ((lsu_type_i == 2'b00) && (data_offset != 2'b00)) || // misaligned word access
-      ((lsu_type_i == 2'b01) && (data_offset == 2'b11));   // misaligned half-word access
+      ((lsu_type_i == 2'b01) && (data_offset == 2'b11)) || // misaligned half-word access
+      (dword_access && !dword_misaligned);                 // aligned doubleword access
 
   // FSM
   always_comb begin
@@ -339,6 +352,7 @@ module cve2_load_store_unit
     handle_misaligned_d = handle_misaligned_q;
     pmp_err_d           = pmp_err_q;
     lsu_err_d           = lsu_err_q;
+    misaligned_err_d    = 1'b0;
 
     addr_update         = 1'b0;
     ctrl_update         = 1'b0;
@@ -352,18 +366,27 @@ module cve2_load_store_unit
       IDLE: begin
         pmp_err_d = 1'b0;
         if (lsu_req_i) begin
-          data_req_o   = 1'b1;
           pmp_err_d    = data_pmp_err_i;
           lsu_err_d    = 1'b0;
           perf_load_o  = ~lsu_we_i;
           perf_store_o = lsu_we_i;
 
-          if (data_gnt_i) begin
+          if (dword_misaligned) begin
+            ctrl_update      = 1'b1;
+            addr_update      = 1'b1;
+            pmp_err_d        = 1'b0;
+            misaligned_err_d = 1'b1;
+            ls_fsm_ns        = IDLE;
+          end else begin
+            data_req_o = 1'b1;
+          end
+
+          if (!dword_misaligned && data_gnt_i) begin
             ctrl_update         = 1'b1;
             addr_update         = 1'b1;
             handle_misaligned_d = split_misaligned_access;
             ls_fsm_ns           = split_misaligned_access ? WAIT_RVALID_MIS : IDLE;
-          end else begin
+          end else if (!dword_misaligned) begin
             ls_fsm_ns           = split_misaligned_access ? WAIT_GNT_MIS    : WAIT_GNT;
           end
         end
@@ -458,11 +481,13 @@ module cve2_load_store_unit
       handle_misaligned_q <= '0;
       pmp_err_q           <= '0;
       lsu_err_q           <= '0;
+      misaligned_err_q    <= '0;
     end else begin
       ls_fsm_cs           <= ls_fsm_ns;
       handle_misaligned_q <= handle_misaligned_d;
       pmp_err_q           <= pmp_err_d;
       lsu_err_q           <= lsu_err_d;
+      misaligned_err_q    <= misaligned_err_d;
     end
   end
 
@@ -470,16 +495,45 @@ module cve2_load_store_unit
   // Outputs //
   /////////////
 
-  assign data_or_pmp_err    = lsu_err_q | data_err_i | pmp_err_q;
-  assign lsu_resp_valid_o   = (data_rvalid_i | pmp_err_q) & (ls_fsm_cs == IDLE);
-  assign lsu_rdata_valid_o  = (ls_fsm_cs == IDLE) & data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
+  assign data_or_pmp_err    = lsu_err_q | data_err_i | pmp_err_q | misaligned_err_q;
+  assign lsu_resp_valid_o   = (data_rvalid_i | pmp_err_q | misaligned_err_q) &
+                              (ls_fsm_cs == IDLE);
+
+  assign dword_lower_rvalid = (data_type_q == 2'b11) &
+                              ((ls_fsm_cs == WAIT_RVALID_MIS) |
+                               (ls_fsm_cs == WAIT_RVALID_MIS_GNTS_DONE)) &
+                              data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
+
+  assign lsu_rdata_valid_o  = (((ls_fsm_cs == IDLE) & data_rvalid_i) |
+                               dword_lower_rvalid) &
+                              ~data_or_pmp_err & ~data_we_q;
+
+  assign lsu_rdata_upper_o  = (data_type_q == 2'b11) &
+                              (ls_fsm_cs == IDLE) &
+                              data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
 
   // output to register file
   assign lsu_rdata_o = data_rdata_ext;
 
-  assign lsu_rdata_tag_o = data_sign_ext_q ?
-                          (lsu_rdata_o[31] ? 2'b11 : 2'b10) :
-                          2'b10;
+  always_comb begin
+    if (data_type_q == 2'b11) begin
+      if (lsu_rdata_upper_o) begin
+        if (lsu_rdata_o == 32'h0000_0000) begin
+          lsu_rdata_tag_o = 2'b10;
+        end else if (lsu_rdata_o == 32'hffff_ffff) begin
+          lsu_rdata_tag_o = 2'b11;
+        end else begin
+          lsu_rdata_tag_o = 2'b01;
+        end
+      end else begin
+        lsu_rdata_tag_o = 2'b01;
+      end
+    end else begin
+      lsu_rdata_tag_o = data_sign_ext_q ?
+                        (lsu_rdata_o[31] ? 2'b11 : 2'b10) :
+                        2'b10;
+    end
+  end
 
   // output data address must be word aligned
   assign data_addr_w_aligned = {data_addr[31:2], 2'b00};

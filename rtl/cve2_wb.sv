@@ -32,6 +32,7 @@ module cve2_wb #(
   input  logic [31:0]              rf_wdata_lsu_i,
   input  logic                     rf_we_lsu_i,
   input  logic [1:0]               rf_wdata_lsu_tag_i,
+  input  logic                     rf_wdata_lsu_upper_i,
 
   output logic [4:0]               rf_waddr_wb_o,
   output logic [31:0]              rf_wdata_wb_o,
@@ -72,7 +73,7 @@ module cve2_wb #(
                          ({32{rf_wdata_wb_mux_we[1]}} & rf_wdata_wb_mux[1]);
   assign rf_we_wb_o    = |rf_wdata_wb_mux_we;
 
-  assign w_upper_o = w_upper_i;
+  assign w_upper_o = rf_we_lsu_i ? rf_wdata_lsu_upper_i : w_upper_i;
 
   // Tag computation:
   //   Upper-half write (2nd cycle): derive tag from actual upper result data

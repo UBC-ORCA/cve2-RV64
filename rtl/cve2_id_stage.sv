@@ -258,6 +258,7 @@ module cve2_id_stage #(
   op_class_e   op_class;
   logic        op_uses_tagged_path;
   logic        is_op_or_op_imm;
+  logic        is_word_op;
   logic [1:0]  tag_a_eff, tag_b_eff, tag_b_raw;
   logic        need_upper;
   logic        a_explicit, b_explicit;
@@ -289,6 +290,8 @@ module cve2_id_stage #(
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
   logic        lsu_req, lsu_req_dec;
+  logic        lsu_store_upper_half;
+  logic [31:0] lsu_wdata_upper;
   logic        data_req_allowed;
 
   // CSR control
@@ -475,6 +478,7 @@ module cve2_id_stage #(
     if (!rst_ni) begin
       carry_in_o <= 1'b0;
     end else if ((op_class == OP_CLASS_ADDER) &&
+                 !is_word_op &&
                  instr_executing_spec &&
                  (id_fsm_q == FIRST_CYCLE)) begin
       carry_in_o <= carry_out_i;
@@ -654,10 +658,14 @@ module cve2_id_stage #(
   // =========================================================================
   // Op classification — drives FSM, forwarding mux, tag derivation
   // =========================================================================
-  // OPCODE_OP/OP_IMM enter the tagged ALU path. Branches enter only for their
+  // OP/OP_IMM and RV64 word ALU opcodes enter the tagged ALU path. Branches enter only for their
   // comparison cycle; their target-address ADD remains outside the tagged path.
-  assign is_op_or_op_imm = (instr_rdata_alu_i[6:0] == 7'b0110011) ||  // OPCODE_OP
-                           (instr_rdata_alu_i[6:0] == 7'b0010011);    // OPCODE_OP_IMM
+  assign is_word_op = (instr_rdata_alu_i[6:0] == OPCODE_OP_32) ||
+                      (instr_rdata_alu_i[6:0] == OPCODE_OP_IMM_32);
+
+  assign is_op_or_op_imm = (instr_rdata_alu_i[6:0] == OPCODE_OP) ||
+                           (instr_rdata_alu_i[6:0] == OPCODE_OP_IMM) ||
+                           is_word_op;
 
   always_comb begin
     op_class = OP_CLASS_NONE;
@@ -675,7 +683,9 @@ module cve2_id_stage #(
         ALU_SLT, ALU_SLTU: begin
           op_class = OP_CLASS_COMPARE;
         end
-        // SLL/SRL/SRA: deferred to mechanism 2
+        ALU_SLL, ALU_SRL, ALU_SRA: begin
+          op_class = is_word_op ? OP_CLASS_SHIFT : OP_CLASS_NONE;
+        end
         default: op_class = OP_CLASS_NONE;
       endcase
     end
@@ -757,7 +767,7 @@ module cve2_id_stage #(
     need_upper = 1'b0;
     unique case (op_class)
       OP_CLASS_ADDER: begin
-        need_upper = a_explicit || b_explicit || upper_not_inferable;
+        need_upper = is_word_op ? 1'b0 : (a_explicit || b_explicit || upper_not_inferable);
       end
       OP_CLASS_BITWISE: begin
         case (alu_operator)
@@ -770,6 +780,9 @@ module cve2_id_stage #(
       OP_CLASS_COMPARE: begin
         need_upper = cmp_need_lower_after_upper && !branch_in_dec;
       end
+      OP_CLASS_SHIFT: begin
+        need_upper = 1'b0;
+      end
       default: need_upper = 1'b0;
     endcase
   end
@@ -780,43 +793,47 @@ module cve2_id_stage #(
   // =========================================================================
   always_comb begin
     w_tag_id_o = 2'b00;
-    unique case (op_class)
-      OP_CLASS_ADDER: begin
-        if      (both_00)                               w_tag_id_o = 2'b00;
-        else if (a_zero && b_zero && !carry_out_i)      w_tag_id_o = 2'b10; // 0+0+0=0
-        else if ((a_ones ^ b_ones) && !carry_out_i)     w_tag_id_o = 2'b11; // 0+FF+0=FF
-        else if ((a_ones ^ b_ones) &&  carry_out_i)     w_tag_id_o = 2'b10; // 0+FF+1=00
-        else if (a_ones && b_ones && carry_out_i)       w_tag_id_o = 2'b11; // FF+FF+1=FF
-        else                                             w_tag_id_o = 2'b01; // 2-cycle path
-      end
-      OP_CLASS_BITWISE: begin
-        case (alu_operator)
-          ALU_AND: begin
-            if      (both_00)                  w_tag_id_o = 2'b00;
-            else if (a_zero || b_zero)         w_tag_id_o = 2'b10;
-            else if (a_ones && b_ones)         w_tag_id_o = 2'b11;
-            else                               w_tag_id_o = 2'b01;
-          end
-          ALU_OR: begin
-            if      (both_00)                  w_tag_id_o = 2'b00;
-            else if (a_ones || b_ones)         w_tag_id_o = 2'b11;
-            else if (a_zero && b_zero)         w_tag_id_o = 2'b10;
-            else                               w_tag_id_o = 2'b01;
-          end
-          ALU_XOR: begin
-            if      (both_00)                  w_tag_id_o = 2'b00;
-            else if (a_explicit || b_explicit) w_tag_id_o = 2'b01;
-            else if (a_zero == b_zero)         w_tag_id_o = 2'b10; // 0^0 or FF^FF
-            else                               w_tag_id_o = 2'b11; // 0^FF
-          end
-          default: w_tag_id_o = 2'b00;
-        endcase
-      end
-      OP_CLASS_COMPARE: begin
-        w_tag_id_o = 2'b10;
-      end
-      default: w_tag_id_o = 2'b00;
-    endcase
+    if (is_word_op) begin
+      w_tag_id_o = result_ex_i[31] ? 2'b11 : 2'b10;
+    end else begin
+      unique case (op_class)
+        OP_CLASS_ADDER: begin
+          if      (both_00)                               w_tag_id_o = 2'b00;
+          else if (a_zero && b_zero && !carry_out_i)      w_tag_id_o = 2'b10; // 0+0+0=0
+          else if ((a_ones ^ b_ones) && !carry_out_i)     w_tag_id_o = 2'b11; // 0+FF+0=FF
+          else if ((a_ones ^ b_ones) &&  carry_out_i)     w_tag_id_o = 2'b10; // 0+FF+1=00
+          else if (a_ones && b_ones && carry_out_i)       w_tag_id_o = 2'b11; // FF+FF+1=FF
+          else                                             w_tag_id_o = 2'b01; // 2-cycle path
+        end
+        OP_CLASS_BITWISE: begin
+          case (alu_operator)
+            ALU_AND: begin
+              if      (both_00)                  w_tag_id_o = 2'b00;
+              else if (a_zero || b_zero)         w_tag_id_o = 2'b10;
+              else if (a_ones && b_ones)         w_tag_id_o = 2'b11;
+              else                               w_tag_id_o = 2'b01;
+            end
+            ALU_OR: begin
+              if      (both_00)                  w_tag_id_o = 2'b00;
+              else if (a_ones || b_ones)         w_tag_id_o = 2'b11;
+              else if (a_zero && b_zero)         w_tag_id_o = 2'b10;
+              else                               w_tag_id_o = 2'b01;
+            end
+            ALU_XOR: begin
+              if      (both_00)                  w_tag_id_o = 2'b00;
+              else if (a_explicit || b_explicit) w_tag_id_o = 2'b01;
+              else if (a_zero == b_zero)         w_tag_id_o = 2'b10; // 0^0 or FF^FF
+              else                               w_tag_id_o = 2'b11; // 0^FF
+            end
+            default: w_tag_id_o = 2'b00;
+          endcase
+        end
+        OP_CLASS_COMPARE: begin
+          w_tag_id_o = 2'b10;
+        end
+        default: w_tag_id_o = 2'b00;
+      endcase
+    end
   end
 
   always_comb begin
@@ -835,7 +852,8 @@ module cve2_id_stage #(
   assign lsu_we_o                = lsu_we;
   assign lsu_type_o              = lsu_type;
   assign lsu_sign_ext_o          = lsu_sign_ext;
-  assign lsu_wdata_o             = rf_rdata_b_fwd;
+  assign lsu_store_upper_half    = lsu_addr_incr_req_i & lsu_we & (lsu_type == 2'b11);
+  assign lsu_wdata_o             = lsu_store_upper_half ? lsu_wdata_upper : rf_rdata_b_fwd;
   assign csr_op_en_o             = csr_access_o & instr_executing & instr_id_done_o;
 
   assign alu_operator_ex_o           = alu_operator_eff;
@@ -1020,6 +1038,10 @@ module cve2_id_stage #(
       r_a_upper_o = 1'b1;
       r_b_upper_o = (alu_op_b_mux_sel != OP_B_IMM);
     end
+
+    if (lsu_store_upper_half && (r_b_tag_i == 2'b01)) begin
+      r_b_upper_o = 1'b1;
+    end
   end
 
   `ASSERT(StallIDIfMulticycle, (id_fsm_q == FIRST_CYCLE) & (id_fsm_d == MULTI_CYCLE) |-> stall_id)
@@ -1069,6 +1091,15 @@ module cve2_id_stage #(
       rf_rdata_a_fwd = rf_rdata_a_i;
       rf_rdata_b_fwd = rf_rdata_b_i;
     end
+  end
+
+  always_comb begin
+    unique case (r_b_tag_i)
+      2'b00,
+      2'b10:   lsu_wdata_upper = 32'h0000_0000;
+      2'b11:   lsu_wdata_upper = 32'hffff_ffff;
+      default: lsu_wdata_upper = rf_rdata_b_i;
+    endcase
   end
 
   logic unused_data_req_done_ex;

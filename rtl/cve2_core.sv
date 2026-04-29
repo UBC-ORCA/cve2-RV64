@@ -190,6 +190,7 @@ module cve2_core import cve2_pkg::*; #(
   // read data as this is too late for the forwarding path)
   logic [31:0] rf_wdata_lsu;
   logic [1:0] rf_wdata_lsu_tag;
+  logic        rf_wdata_lsu_upper;
   logic        rf_we_wb;
   logic        rf_we_lsu;
 
@@ -627,6 +628,7 @@ module cve2_core import cve2_pkg::*; #(
     .lsu_rdata_o      (rf_wdata_lsu),
     .lsu_rdata_valid_o(rf_we_lsu),
     .lsu_rdata_tag_o  (rf_wdata_lsu_tag),
+    .lsu_rdata_upper_o(rf_wdata_lsu_upper),
     .lsu_req_i        (lsu_req),
 
     .adder_result_ex_i(alu_adder_result_ex),
@@ -665,6 +667,7 @@ module cve2_core import cve2_pkg::*; #(
 
     .rf_wdata_lsu_i(rf_wdata_lsu),
     .rf_we_lsu_i   (rf_we_lsu),
+    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper),
 
     .rf_waddr_wb_o(rf_waddr_wb),
     .rf_wdata_wb_o(rf_wdata_wb),
@@ -1350,6 +1353,7 @@ module cve2_core import cve2_pkg::*; #(
       2'b00:   rvfi_mem_mask_int = 4'b1111;
       2'b01:   rvfi_mem_mask_int = 4'b0011;
       2'b10:   rvfi_mem_mask_int = 4'b0001;
+      2'b11:   rvfi_mem_mask_int = 4'b1111;
       default: rvfi_mem_mask_int = 4'b0000;
     endcase
   end
