@@ -59,7 +59,9 @@ module testbench;
   // Branch decision feedback (EX->ID)
   // --------------------
   logic branch_decision_i;
-  assign branch_decision_i = 1'b0;
+  logic branch_decision_o;
+  logic alu_is_equal_result_o;
+  assign branch_decision_i = branch_decision_o;
 
   // --------------------
   // ID control outputs
@@ -294,6 +296,7 @@ module testbench;
     .id_in_ready_o,
 
     .branch_decision_i,
+    .alu_is_equal_result_i(alu_is_equal_result_o),
 
     .pc_set_o,
     .pc_mux_o,
@@ -421,7 +424,6 @@ module testbench;
   // --------------------
   logic [31:0] alu_adder_result_ex_o;
   logic [31:0] branch_target_o;
-  logic        branch_decision_o;
 
   cve2_ex_block #(
     .RV32M(RV32MFast),
@@ -455,6 +457,7 @@ module testbench;
     .result_ex_o          (result_ex_i),
     .branch_target_o      (branch_target_o),
     .branch_decision_o    (branch_decision_o),
+    .alu_is_equal_result_o(alu_is_equal_result_o),
 
     .ex_valid_o           (ex_valid_i)
   );
@@ -678,6 +681,16 @@ module testbench;
   localparam logic [31:0] LBU_X3_0_X1    = 32'h0000c183;  // LBU x3, 0(x1)
   localparam logic [31:0] LHU_X3_0_X1    = 32'h0000d183;  // LHU x3, 0(x1)
   localparam logic [31:0] LWU_X3_0_X1    = 32'h0000e183;  // LWU x3, 0(x1)
+  localparam logic [31:0] SLT_X3_X1_X2   = 32'h0020a1b3;  // SLT  x3, x1, x2
+  localparam logic [31:0] SLTU_X3_X1_X2  = 32'h0020b1b3;  // SLTU x3, x1, x2
+  localparam logic [31:0] SLTI_X3_X1_NEG = 32'hfff0a193;  // SLTI  x3, x1, -1
+  localparam logic [31:0] SLTIU_X3_X1_NEG = 32'hfff0b193; // SLTIU x3, x1, -1
+  localparam logic [31:0] BEQ_X1_X2      = 32'h00208463;  // BEQ  x1, x2, +8
+  localparam logic [31:0] BNE_X1_X2      = 32'h00209463;  // BNE  x1, x2, +8
+  localparam logic [31:0] BLT_X1_X2      = 32'h0020c463;  // BLT  x1, x2, +8
+  localparam logic [31:0] BGE_X1_X2      = 32'h0020d463;  // BGE  x1, x2, +8
+  localparam logic [31:0] BLTU_X1_X2     = 32'h0020e463;  // BLTU x1, x2, +8
+  localparam logic [31:0] BGEU_X1_X2     = 32'h0020f463;  // BGEU x1, x2, +8
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -691,12 +704,11 @@ module testbench;
     @(posedge clk_i);
     #1;
 
-    if (dut_id.id_fsm_q == 1'b1) begin  // MULTI_CYCLE
-      cycles_taken = 2;
+    cycles_taken = 1;
+    while (dut_id.id_fsm_q != 2'b00) begin
+      cycles_taken++;
       @(posedge clk_i);
       #1;
-    end else begin
-      cycles_taken = 1;
     end
 
     instr_valid_i     = 1'b0;
@@ -806,6 +818,16 @@ module testbench;
       $display("%s: ALL CHECKS PASSED", test_name);
     else
       $display("%s: SOME CHECKS FAILED", test_name);
+  endtask
+
+  task automatic check_cycles_only(input string       test_name,
+                                   input int unsigned exp_cycles,
+                                   input int unsigned actual_cycles);
+    if (actual_cycles !== exp_cycles) begin
+      $error("%s FAIL: cycles = %0d, expected %0d", test_name, actual_cycles, exp_cycles);
+    end else begin
+      $display("%s PASS: cycles = %0d", test_name, actual_cycles);
+    end
   endtask
 
   // --------------------
@@ -1467,6 +1489,109 @@ module testbench;
     // ==========================================================
     $display("\n==============================");
     $display("All %0d XORI tests complete", 4);
+    $display("==============================");
+
+
+    // ==========================================================
+    // Compare tests — tag-aware 64-bit SLT/SLTU/SLTI/SLTIU
+    // ==========================================================
+    $display("\n========== COMPARE tests ==========");
+
+    // Equal inferred uppers: lower half must be compared unsigned, even for signed SLT.
+    $display("\n---- CMP-1: SLT equal inferred uppers, lower unsigned decides false ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'hffff_ffff, 2'b10);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0000, 2'b10);
+    inject_instr(SLT_X3_X1_X2, cycles);
+    check_result("C01", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // Signed compare with inferred uppers different: upper sign decides.
+    $display("\n---- CMP-2: SLT inferred upper -1 < 0 ----");
+    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
+    inject_instr(SLT_X3_X1_X2, cycles);
+    check_result("C02", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // Unsigned compare with inferred uppers different: upper magnitude decides.
+    $display("\n---- CMP-3: SLTU inferred upper FFFFFFFF > 0 ----");
+    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
+    inject_instr(SLTU_X3_X1_X2, cycles);
+    check_result("C03", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // Explicit equal uppers require a lower-cycle compare; lower remains unsigned for signed SLT.
+    $display("\n---- CMP-4: SLT explicit equal uppers, lower unsigned decides false ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'hffff_ffff, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    inject_instr(SLT_X3_X1_X2, cycles);
+    check_result("C04", 5'd3, 32'h0000_0000, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Explicit different uppers can complete from the upper compare alone.
+    $display("\n---- CMP-5: SLT explicit upper 0 < 1 ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'hffff_ffff, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    inject_instr(SLT_X3_X1_X2, cycles);
+    check_result("C05", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // SLTI uses the sign-extended immediate as the inferred upper half.
+    $display("\n---- CMP-6: SLTI 0 < -1 is false ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
+    inject_instr(SLTI_X3_X1_NEG, cycles);
+    check_result("C06", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    // SLTIU compares the sign-extended immediate as a 64-bit unsigned value.
+    $display("\n---- CMP-7: SLTIU 0 < -1 is true ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
+    inject_instr(SLTIU_X3_X1_NEG, cycles);
+    check_result("C07", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n==============================");
+    $display("All %0d COMPARE tests complete", 7);
+    $display("==============================");
+
+
+    // ==========================================================
+    // Branch compare tests
+    // ==========================================================
+    $display("\n========== BRANCH compare tests ==========");
+
+    $display("\n---- BR-1: BEQ inferred equal, taken ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    inject_instr(BEQ_X1_X2, cycles);
+    check_cycles_only("B01", 2, cycles);
+
+    $display("\n---- BR-2: BNE inferred upper differs, taken ----");
+    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0005, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    inject_instr(BNE_X1_X2, cycles);
+    check_cycles_only("B02", 2, cycles);
+
+    $display("\n---- BR-3: BLT inferred signed upper -1 < 0, taken ----");
+    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
+    inject_instr(BLT_X1_X2, cycles);
+    check_cycles_only("B03", 2, cycles);
+
+    $display("\n---- BR-4: BGE inferred signed upper 0 >= -1, taken ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
+    write_rf_64(5'd2, 32'hffff_ffff, 32'hffff_ffff, 2'b11);
+    inject_instr(BGE_X1_X2, cycles);
+    check_cycles_only("B04", 2, cycles);
+
+    $display("\n---- BR-5: BLTU inferred upper FFFFFFFF < 0 is false ----");
+    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
+    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
+    inject_instr(BLTU_X1_X2, cycles);
+    check_cycles_only("B05", 1, cycles);
+
+    $display("\n---- BR-6: BGEU explicit equal uppers, lower decides taken ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'hffff_ffff, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    inject_instr(BGEU_X1_X2, cycles);
+    check_cycles_only("B06", 3, cycles);
+
+    $display("\n==============================");
+    $display("All %0d BRANCH compare tests complete", 6);
     $display("==============================");
 
 

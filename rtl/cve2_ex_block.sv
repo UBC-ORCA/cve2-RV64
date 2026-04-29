@@ -45,6 +45,7 @@ module cve2_ex_block #(
   output logic [31:0]           result_ex_o,
   output logic [31:0]           branch_target_o,       // to IF
   output logic                  branch_decision_o,     // to ID
+  output logic                  alu_is_equal_result_o, // to ID
 
   output logic                  ex_valid_o             // EX has valid output
 );
@@ -86,6 +87,7 @@ module cve2_ex_block #(
 
   // branch handling
   assign branch_decision_o  = alu_cmp_result;
+  assign alu_is_equal_result_o = alu_is_equal_result;
 
   // Unused bt_operand signals cause lint errors, this avoids them
   //logic [31:0] unused_bt_a_operand, unused_bt_b_operand;

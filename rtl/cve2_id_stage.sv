@@ -44,6 +44,7 @@ module cve2_id_stage #(
 
   // Jumps and branches
   input  logic                      branch_decision_i,
+  input  logic                      alu_is_equal_result_i,
 
   // IF and ID stage signals
   output logic                      pc_set_o,
@@ -246,6 +247,7 @@ module cve2_id_stage #(
   op_b_sel_e   alu_op_b_mux_sel, alu_op_b_mux_sel_dec;
   logic        alu_multicycle_dec;
   logic        stall_alu;
+  alu_op_e     alu_operator_eff;
 
   logic [33:0] imd_val_q[2];
 
@@ -264,6 +266,16 @@ module cve2_id_stage #(
   logic        both_00;
   logic        upper_not_inferable;
   logic [31:0] imm_b_eff;
+  logic        use_upper_half_operands;
+  logic        cmp_is_compare;
+  logic        cmp_is_lower_cycle;
+  logic        cmp_use_upper_first;
+  logic        cmp_need_lower_after_upper;
+  logic        cmp_upper_inferred_equal;
+  logic        cmp_a_upper_inferred;
+  logic        cmp_b_upper_inferred;
+  logic        cmp_a_upper_ones;
+  logic        cmp_b_upper_ones;
 
   // Multiplier Control
   logic        mult_en_id, mult_en_dec;
@@ -293,7 +305,7 @@ module cve2_id_stage #(
   // ID-EX FSM //
   ///////////////
 
-  typedef enum logic { FIRST_CYCLE, MULTI_CYCLE } id_fsm_e;
+  typedef enum logic [1:0] { FIRST_CYCLE, MULTI_CYCLE, CMP_LOWER_CYCLE } id_fsm_e;
   id_fsm_e id_fsm_q, id_fsm_d;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : id_pipeline_reg
@@ -435,8 +447,8 @@ module cve2_id_stage #(
       IMM_B_INCR_PC,
       IMM_B_INCR_ADDR})
 
-  // For tagged-ALU upper-half cycle, immediate's "upper" is its sign-extension.
-  assign imm_b_eff = (op_uses_tagged_path && (id_fsm_q == MULTI_CYCLE))
+  // For tagged upper-half cycles, immediate's "upper" is its sign-extension.
+  assign imm_b_eff = use_upper_half_operands
                    ? {32{imm_b[31]}}
                    : imm_b;
   assign alu_operand_b = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b_eff : rf_rdata_b_fwd;
@@ -642,20 +654,29 @@ module cve2_id_stage #(
   // =========================================================================
   // Op classification — drives FSM, forwarding mux, tag derivation
   // =========================================================================
-  // Only OPCODE_OP (R-type) and OPCODE_OP_IMM (I-type) are eligible. Other
-  // opcodes (LOAD/STORE/BRANCH/JAL/JALR/AUIPC/LUI) also use ALU_ADD but for
-  // address calculation — they MUST NOT enter the tagged path.
+  // OPCODE_OP/OP_IMM enter the tagged ALU path. Branches enter only for their
+  // comparison cycle; their target-address ADD remains outside the tagged path.
   assign is_op_or_op_imm = (instr_rdata_alu_i[6:0] == 7'b0110011) ||  // OPCODE_OP
                            (instr_rdata_alu_i[6:0] == 7'b0010011);    // OPCODE_OP_IMM
 
   always_comb begin
     op_class = OP_CLASS_NONE;
-    if (is_op_or_op_imm) begin
+    if (is_op_or_op_imm || (instr_rdata_alu_i[6:0] == 7'b1100011)) begin // OPCODE_BRANCH
       unique case (alu_operator)
-        ALU_ADD, ALU_SUB:         op_class = OP_CLASS_ADDER;
-        ALU_AND, ALU_OR, ALU_XOR: op_class = OP_CLASS_BITWISE;
-        // SLT/SLTU/SLL/SRL/SRA:   deferred to mechanisms 2, 3
-        default:                   op_class = OP_CLASS_NONE;
+        ALU_ADD, ALU_SUB: begin
+          op_class = is_op_or_op_imm ? OP_CLASS_ADDER : OP_CLASS_NONE;
+        end
+        ALU_AND, ALU_OR, ALU_XOR: begin
+          op_class = is_op_or_op_imm ? OP_CLASS_BITWISE : OP_CLASS_NONE;
+        end
+        ALU_EQ,  ALU_NE,
+        ALU_LT,  ALU_LTU,
+        ALU_GE,  ALU_GEU,
+        ALU_SLT, ALU_SLTU: begin
+          op_class = OP_CLASS_COMPARE;
+        end
+        // SLL/SRL/SRA: deferred to mechanism 2
+        default: op_class = OP_CLASS_NONE;
       endcase
     end
   end
@@ -702,6 +723,34 @@ module cve2_id_stage #(
   end
 
   // =========================================================================
+  // Tag-aware compare control
+  // =========================================================================
+  assign cmp_is_compare       = (op_class == OP_CLASS_COMPARE);
+  assign cmp_a_upper_inferred = (tag_a_eff != 2'b01);
+  assign cmp_b_upper_inferred = (tag_b_raw != 2'b01);
+  assign cmp_a_upper_ones     = (tag_a_eff == 2'b11);
+  assign cmp_b_upper_ones     = (tag_b_raw == 2'b11);
+
+  // In RV64 mode tag 00 is treated like tag 10 for compare: inferred upper zero.
+  assign cmp_upper_inferred_equal = cmp_a_upper_inferred &&
+                                    cmp_b_upper_inferred &&
+                                    (cmp_a_upper_ones == cmp_b_upper_ones);
+
+  // If inferred uppers are equal, the first cycle compares lower32. Otherwise it compares upper32.
+  assign cmp_use_upper_first = cmp_is_compare &&
+                               (id_fsm_q == FIRST_CYCLE) &&
+                               !cmp_upper_inferred_equal;
+  assign cmp_is_lower_cycle  = cmp_is_compare &&
+                               (((id_fsm_q == FIRST_CYCLE) && cmp_upper_inferred_equal) ||
+                                (id_fsm_q == CMP_LOWER_CYCLE));
+  assign cmp_need_lower_after_upper = cmp_use_upper_first && alu_is_equal_result_i;
+
+  assign use_upper_half_operands = ((id_fsm_q == MULTI_CYCLE) &&
+                                    op_uses_tagged_path &&
+                                    (op_class != OP_CLASS_COMPARE)) ||
+                                   cmp_use_upper_first;
+
+  // =========================================================================
   // need_upper: 1 = 2-cycle execution required
   // =========================================================================
   always_comb begin
@@ -717,6 +766,9 @@ module cve2_id_stage #(
           ALU_XOR: need_upper =  a_explicit ||  b_explicit;
           default: need_upper = 1'b0;
         endcase
+      end
+      OP_CLASS_COMPARE: begin
+        need_upper = cmp_need_lower_after_upper && !branch_in_dec;
       end
       default: need_upper = 1'b0;
     endcase
@@ -760,8 +812,23 @@ module cve2_id_stage #(
           default: w_tag_id_o = 2'b00;
         endcase
       end
+      OP_CLASS_COMPARE: begin
+        w_tag_id_o = 2'b10;
+      end
       default: w_tag_id_o = 2'b00;
     endcase
+  end
+
+  always_comb begin
+    alu_operator_eff = alu_operator;
+    if (cmp_is_lower_cycle) begin
+      unique case (alu_operator)
+        ALU_LT:  alu_operator_eff = ALU_LTU;
+        ALU_GE:  alu_operator_eff = ALU_GEU;
+        ALU_SLT: alu_operator_eff = ALU_SLTU;
+        default: alu_operator_eff = alu_operator;
+      endcase
+    end
   end
 
   assign lsu_req_o               = lsu_req;
@@ -771,7 +838,7 @@ module cve2_id_stage #(
   assign lsu_wdata_o             = rf_rdata_b_fwd;
   assign csr_op_en_o             = csr_access_o & instr_executing & instr_id_done_o;
 
-  assign alu_operator_ex_o           = alu_operator;
+  assign alu_operator_ex_o           = alu_operator_eff;
   assign alu_operand_a_ex_o          = alu_operand_a;
   assign alu_operand_b_ex_o          = alu_operand_b;
 
@@ -845,21 +912,33 @@ module cve2_id_stage #(
               end
             end
             branch_in_dec: begin
-              id_fsm_d         = (branch_decision_i) ?
-                                     MULTI_CYCLE : FIRST_CYCLE;
-              stall_branch     = branch_decision_i;
-              branch_set_raw_d = branch_decision_i;
-              perf_branch_o = 1'b1;
+              if (cmp_need_lower_after_upper) begin
+                id_fsm_d     = CMP_LOWER_CYCLE;
+                stall_branch = 1'b1;
+              end else begin
+                id_fsm_d         = branch_decision_i ? MULTI_CYCLE : FIRST_CYCLE;
+                stall_branch     = branch_decision_i;
+                branch_set_raw_d = branch_decision_i;
+                perf_branch_o    = 1'b1;
+              end
             end
             jump_in_dec: begin
               id_fsm_d      = MULTI_CYCLE;
               stall_jump    = 1'b1;
               jump_set_raw  = jump_set_dec;
             end
-            op_uses_tagged_path: begin
-              if (need_upper) begin
-                id_fsm_d  = MULTI_CYCLE;
-                stall_alu = 1'b1;
+            (op_uses_tagged_path && !branch_in_dec): begin
+              if (op_class == OP_CLASS_COMPARE) begin
+                if (cmp_need_lower_after_upper) begin
+                  id_fsm_d  = CMP_LOWER_CYCLE;
+                  stall_alu = 1'b1;
+                  rf_we_raw = 1'b0;
+                end
+              end else begin
+                if (need_upper) begin
+                  id_fsm_d  = MULTI_CYCLE;
+                  stall_alu = 1'b1;
+                end
               end
               // else: 1-cycle, stays in FIRST_CYCLE
             end
@@ -895,7 +974,7 @@ module cve2_id_stage #(
         end
 
         MULTI_CYCLE: begin
-            if (op_uses_tagged_path) begin
+            if (op_uses_tagged_path && (op_class != OP_CLASS_COMPARE)) begin
               id_fsm_d        = FIRST_CYCLE;
               r_a_upper_o     = 1'b1;
               r_b_upper_o     = (alu_op_b_mux_sel != OP_B_IMM); // I-type: B is imm, no RF read
@@ -916,10 +995,30 @@ module cve2_id_stage #(
           end
         end
 
+        CMP_LOWER_CYCLE: begin
+          if (branch_in_dec) begin
+            if (branch_decision_i) begin
+              id_fsm_d         = MULTI_CYCLE;
+              stall_branch     = 1'b1;
+              branch_set_raw_d = 1'b1;
+            end else begin
+              id_fsm_d = FIRST_CYCLE;
+            end
+            perf_branch_o = 1'b1;
+          end else begin
+            id_fsm_d = FIRST_CYCLE;
+          end
+        end
+
         default: begin
           id_fsm_d          = FIRST_CYCLE;
         end
       endcase
+    end
+
+    if (use_upper_half_operands) begin
+      r_a_upper_o = 1'b1;
+      r_b_upper_o = (alu_op_b_mux_sel != OP_B_IMM);
     end
   end
 
@@ -933,7 +1032,9 @@ module cve2_id_stage #(
 
   assign instr_done = ~stall_id & ~flush_id & instr_executing;
 
-  assign instr_first_cycle      = instr_valid_i & (id_fsm_q == FIRST_CYCLE);
+  assign instr_first_cycle      = instr_valid_i &
+                                  ((id_fsm_q == FIRST_CYCLE) ||
+                                   (id_fsm_q == CMP_LOWER_CYCLE));
   assign instr_first_cycle_id_o = instr_first_cycle;
 
   assign data_req_allowed = instr_first_cycle;
@@ -951,7 +1052,7 @@ module cve2_id_stage #(
   // the upper-half cycle of any tagged ALU op.
   // =========================================================================
   always_comb begin
-    if (op_uses_tagged_path && (id_fsm_q == MULTI_CYCLE)) begin
+    if (use_upper_half_operands) begin
       case (tag_a_eff)
         2'b00, 2'b10: rf_rdata_a_fwd = 32'h0000_0000;
         2'b11:        rf_rdata_a_fwd = 32'hFFFF_FFFF;
@@ -1027,7 +1128,8 @@ module cve2_id_stage #(
       instr_valid_i && !(illegal_c_insn_i || instr_fetch_err_i))
 
   `ASSERT(IbexMulticycleEnableUnique,
-      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec, (op_uses_tagged_path && need_upper)}))
+      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec,
+                (op_uses_tagged_path && !branch_in_dec && need_upper)}))
 
   `ASSERT(CVE2DuplicateInstrMatch, instr_valid_i |-> instr_rdata_i === instr_rdata_alu_i)
 

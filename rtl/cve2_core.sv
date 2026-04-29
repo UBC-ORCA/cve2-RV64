@@ -166,6 +166,7 @@ module cve2_core import cve2_pkg::*; #(
   // Jump and branch target and decision (EX->IF)
   logic [31:0] branch_target_ex;
   logic        branch_decision;
+  logic        alu_is_equal_result;
 
   // Core busy signals
   logic        ctrl_busy;
@@ -410,6 +411,7 @@ module cve2_core import cve2_pkg::*; #(
 
     // Jumps and branches
     .branch_decision_i(branch_decision),
+    .alu_is_equal_result_i(alu_is_equal_result),
 
     // IF and ID control signals
     .instr_first_cycle_id_o(instr_first_cycle_id),
@@ -587,6 +589,7 @@ module cve2_core import cve2_pkg::*; #(
 
     .branch_target_o  (branch_target_ex),  // to IF
     .branch_decision_o(branch_decision),  // to ID
+    .alu_is_equal_result_o(alu_is_equal_result),
 
     .ex_valid_o(ex_valid)
   );
