@@ -40,6 +40,7 @@ module cve2_load_store_unit
   input  logic         lsu_sign_ext_i,       // sign extension                   -> from ID/EX
 
   output logic [31:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
+  output logic [1:0]   lsu_rdata_tag_o,
   output logic         lsu_rdata_valid_o,
   input  logic         lsu_req_i,            // data request                     -> from ID/EX
 
@@ -475,6 +476,10 @@ module cve2_load_store_unit
 
   // output to register file
   assign lsu_rdata_o = data_rdata_ext;
+
+  assign lsu_rdata_tag_o = data_sign_ext_q ?
+                          (lsu_rdata_o[31] ? 2'b11 : 2'b10) :
+                          2'b10;
 
   // output data address must be word aligned
   assign data_addr_w_aligned = {data_addr[31:2], 2'b00};

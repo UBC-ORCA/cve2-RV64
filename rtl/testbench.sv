@@ -89,7 +89,6 @@ module testbench;
   // --------------------
   logic ex_valid_i;
   logic lsu_resp_valid_i;
-  assign lsu_resp_valid_i = 1'b1;
 
   // --------------------
   // ALU signals ID->EX
@@ -153,12 +152,25 @@ module testbench;
   logic [31:0] lsu_addr_last_i;
   logic        lsu_load_err_i, lsu_store_err_i;
 
+  logic        data_req_o;
+  logic        data_gnt_i;
+  logic        data_rvalid_i;
+  logic        data_err_i;
+  logic        data_pmp_err_i;
+  logic [31:0] data_addr_o;
+  logic        data_we_o;
+  logic [3:0]  data_be_o;
+  logic [31:0] data_wdata_o;
+  logic [31:0] data_rdata_i;
+
   initial begin
-    lsu_addr_incr_req_i = 1'b0;
-    lsu_addr_last_i     = 32'h0;
-    lsu_load_err_i      = 1'b0;
-    lsu_store_err_i     = 1'b0;
+    data_rvalid_i  = 1'b0;
+    data_err_i     = 1'b0;
+    data_pmp_err_i = 1'b0;
+    data_rdata_i   = 32'h0;
   end
+
+  assign data_gnt_i = 1'b1;
 
   // --------------------
   // X-Interface (disabled)
@@ -250,14 +262,10 @@ module testbench;
   logic [1:0]  w_tag_id;
   logic        rf_w_upper_wb_o;
 
-  // LSU writeback path (unused)
+  // LSU writeback path
   logic [31:0] rf_wdata_lsu_i;
+  logic [1:0]  rf_wdata_lsu_tag_i;
   logic        rf_we_lsu_i;
-
-  initial begin
-    rf_wdata_lsu_i = 32'h0;
-    rf_we_lsu_i    = 1'b0;
-  end
 
   // --------------------
   // Instantiate ID
@@ -452,6 +460,50 @@ module testbench;
   );
 
   // --------------------
+  // Instantiate LSU
+  // --------------------
+  cve2_load_store_unit dut_lsu (
+    .clk_i,
+    .rst_ni,
+
+    .data_req_o,
+    .data_gnt_i,
+    .data_rvalid_i,
+    .data_err_i,
+    .data_pmp_err_i,
+
+    .data_addr_o,
+    .data_we_o,
+    .data_be_o,
+    .data_wdata_o,
+    .data_rdata_i,
+
+    .lsu_we_i      (lsu_we_o),
+    .lsu_type_i    (lsu_type_o),
+    .lsu_wdata_i   (lsu_wdata_o),
+    .lsu_sign_ext_i(lsu_sign_ext_o),
+
+    .lsu_rdata_o      (rf_wdata_lsu_i),
+    .lsu_rdata_tag_o  (rf_wdata_lsu_tag_i),
+    .lsu_rdata_valid_o(rf_we_lsu_i),
+    .lsu_req_i        (lsu_req_o),
+
+    .adder_result_ex_i(alu_adder_result_ex_o),
+
+    .addr_incr_req_o(lsu_addr_incr_req_i),
+    .addr_last_o    (lsu_addr_last_i),
+
+    .lsu_resp_valid_o(lsu_resp_valid_i),
+
+    .load_err_o (lsu_load_err_i),
+    .store_err_o(lsu_store_err_i),
+
+    .busy_o(),
+    .perf_load_o(),
+    .perf_store_o()
+  );
+
+  // --------------------
   // Instantiate WB
   // --------------------
   cve2_wb dut_wb (
@@ -471,6 +523,7 @@ module testbench;
 
     .rf_wdata_lsu_i(rf_wdata_lsu_i),
     .rf_we_lsu_i   (rf_we_lsu_i),
+    .rf_wdata_lsu_tag_i(rf_wdata_lsu_tag_i),
 
     .rf_waddr_wb_o(rf_waddr_wb_o),
     .rf_wdata_wb_o(rf_wdata_wb_o),
@@ -619,6 +672,12 @@ module testbench;
   localparam logic [31:0] ORI_X3_X1_NEG  = 32'hfff0e193;  // ORI  x3, x1, -1
   localparam logic [31:0] XORI_X3_X1_POS = 32'h0050c193;  // XORI x3, x1, +5
   localparam logic [31:0] XORI_X3_X1_NEG = 32'hfff0c193;  // XORI x3, x1, -1
+  localparam logic [31:0] LB_X3_0_X1     = 32'h00008183;  // LB  x3, 0(x1)
+  localparam logic [31:0] LH_X3_0_X1     = 32'h00009183;  // LH  x3, 0(x1)
+  localparam logic [31:0] LW_X3_0_X1     = 32'h0000a183;  // LW  x3, 0(x1)
+  localparam logic [31:0] LBU_X3_0_X1    = 32'h0000c183;  // LBU x3, 0(x1)
+  localparam logic [31:0] LHU_X3_0_X1    = 32'h0000d183;  // LHU x3, 0(x1)
+  localparam logic [31:0] LWU_X3_0_X1    = 32'h0000e183;  // LWU x3, 0(x1)
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -643,6 +702,37 @@ module testbench;
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
     instr_rdata_alu_i = 32'h0000_0013;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_load(input  logic [31:0]  encoding,
+                             input  logic [31:0]  mem_word,
+                             output int unsigned  cycles_taken);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    data_rvalid_i     = 1'b0;
+    data_rdata_i      = 32'h0000_0000;
+
+    // First cycle issues the load request. The testbench grants immediately.
+    @(posedge clk_i);
+    #1;
+    data_rdata_i  = mem_word;
+    data_rvalid_i = 1'b1;
+
+    // Second cycle returns the memory response and lets WB write the RF.
+    @(posedge clk_i);
+    #1;
+    cycles_taken  = 2;
+    data_rvalid_i = 1'b0;
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    data_rdata_i      = 32'h0000_0000;
 
     repeat (3) @(posedge clk_i);
   endtask
@@ -1379,6 +1469,61 @@ module testbench;
     $display("All %0d XORI tests complete", 4);
     $display("==============================");
 
+
+    // ==========================================================
+    // LOAD tag tests
+    // ==========================================================
+    $display("\n========== LOAD tag tests ==========");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
+
+    // Signed byte with positive sign bit -> zero-inferred upper.
+    $display("\n---- LOAD-1: LB positive ----");
+    inject_load(LB_X3_0_X1, 32'h0000_007f, cycles);
+    check_result("L01", 5'd3, 32'h0000_007f, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Signed byte with negative sign bit -> ones-inferred upper.
+    $display("\n---- LOAD-2: LB negative ----");
+    inject_load(LB_X3_0_X1, 32'h0000_0080, cycles);
+    check_result("L02", 5'd3, 32'hffff_ff80, 2'b11, 2, cycles, 32'h0, 1'b0);
+
+    // Unsigned byte always zero-extends, even when bit 7 is set.
+    $display("\n---- LOAD-3: LBU high bit set ----");
+    inject_load(LBU_X3_0_X1, 32'h0000_0080, cycles);
+    check_result("L03", 5'd3, 32'h0000_0080, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Signed halfword with positive sign bit -> zero-inferred upper.
+    $display("\n---- LOAD-4: LH positive ----");
+    inject_load(LH_X3_0_X1, 32'h0000_7fff, cycles);
+    check_result("L04", 5'd3, 32'h0000_7fff, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Signed halfword with negative sign bit -> ones-inferred upper.
+    $display("\n---- LOAD-5: LH negative ----");
+    inject_load(LH_X3_0_X1, 32'h0000_8001, cycles);
+    check_result("L05", 5'd3, 32'hffff_8001, 2'b11, 2, cycles, 32'h0, 1'b0);
+
+    // Unsigned halfword always zero-extends, even when bit 15 is set.
+    $display("\n---- LOAD-6: LHU high bit set ----");
+    inject_load(LHU_X3_0_X1, 32'h0000_8001, cycles);
+    check_result("L06", 5'd3, 32'h0000_8001, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Signed word with positive sign bit -> zero-inferred upper.
+    $display("\n---- LOAD-7: LW positive ----");
+    inject_load(LW_X3_0_X1, 32'h7fff_ffff, cycles);
+    check_result("L07", 5'd3, 32'h7fff_ffff, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    // Signed word with negative sign bit -> ones-inferred upper.
+    $display("\n---- LOAD-8: LW negative ----");
+    inject_load(LW_X3_0_X1, 32'h8000_0000, cycles);
+    check_result("L08", 5'd3, 32'h8000_0000, 2'b11, 2, cycles, 32'h0, 1'b0);
+
+    // LWU zero-extends, so tag stays zero-inferred even when bit 31 is set.
+    $display("\n---- LOAD-9: LWU high bit set ----");
+    inject_load(LWU_X3_0_X1, 32'h8000_0000, cycles);
+    check_result("L09", 5'd3, 32'h8000_0000, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    $display("\n==============================");
+    $display("All %0d LOAD tag tests complete", 9);
+    $display("==============================");
 
 
     repeat (10) @(posedge clk_i);

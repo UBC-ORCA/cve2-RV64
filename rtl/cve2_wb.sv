@@ -31,6 +31,7 @@ module cve2_wb #(
 
   input  logic [31:0]              rf_wdata_lsu_i,
   input  logic                     rf_we_lsu_i,
+  input  logic [1:0]               rf_wdata_lsu_tag_i,
 
   output logic [4:0]               rf_waddr_wb_o,
   output logic [31:0]              rf_wdata_wb_o,
@@ -77,8 +78,9 @@ module cve2_wb #(
   //   Upper-half write (2nd cycle): derive tag from actual upper result data
   //   Lower-half write (1st or only cycle): use tag computed by ID stage
   always_comb begin
-    if (w_upper_i) begin
-      // 2nd cycle of 2-cycle add: finalize tag from upper result
+    if (rf_we_lsu_i) begin
+      w_tag_o = rf_wdata_lsu_tag_i;
+    end else if (w_upper_i) begin
       if (rf_wdata_id_i == 32'h0000_0000)
         w_tag_o = 2'b10;
       else if (rf_wdata_id_i == 32'hFFFF_FFFF)
@@ -86,12 +88,10 @@ module cve2_wb #(
       else
         w_tag_o = 2'b01;
     end else begin
-      // Lower-half write: tag from ID stage
-      // For 1-cycle adds: this is the final tag
-      // For 2-cycle adds: gets overwritten by the upper write next cycle
       w_tag_o = w_tag_id_i;
     end
   end
+
 
   `ASSERT(RFWriteFromOneSourceOnly, $onehot0(rf_wdata_wb_mux_we))
 endmodule

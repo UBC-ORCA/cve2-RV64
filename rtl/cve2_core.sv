@@ -188,6 +188,7 @@ module cve2_core import cve2_pkg::*; #(
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
   logic [31:0] rf_wdata_lsu;
+  logic [1:0] rf_wdata_lsu_tag;
   logic        rf_we_wb;
   logic        rf_we_lsu;
 
@@ -199,7 +200,7 @@ module cve2_core import cve2_pkg::*; #(
   logic [1:0]           r_b_tag;
   logic [1:0]           w_tag;
 
-  logic                 w_tag_id;
+  logic [1:0]           w_tag_id;
 
   // ALU Control
   alu_op_e     alu_operator_ex;
@@ -622,6 +623,7 @@ module cve2_core import cve2_pkg::*; #(
 
     .lsu_rdata_o      (rf_wdata_lsu),
     .lsu_rdata_valid_o(rf_we_lsu),
+    .lsu_rdata_tag_o  (rf_wdata_lsu_tag),
     .lsu_req_i        (lsu_req),
 
     .adder_result_ex_i(alu_adder_result_ex),
@@ -664,6 +666,8 @@ module cve2_core import cve2_pkg::*; #(
     .rf_waddr_wb_o(rf_waddr_wb),
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o   (rf_we_wb),
+
+    .rf_wdata_lsu_tag_i(rf_wdata_lsu_tag),
 
     .lsu_resp_valid_i(lsu_resp_valid),
     .lsu_resp_err_i  (lsu_resp_err),

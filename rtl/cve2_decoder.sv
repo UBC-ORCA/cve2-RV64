@@ -324,10 +324,7 @@ module cve2_decoder #(
           2'b00: data_type_o = 2'b10; // lb(u)
           2'b01: data_type_o = 2'b01; // lh(u)
           2'b10: begin
-            data_type_o = 2'b00;      // lw
-            if (instr[14]) begin
-              illegal_insn = 1'b1;    // lwu does not exist
-            end
+            data_type_o = 2'b00;      // lw/lwu
           end
           default: begin
             illegal_insn = 1'b1;
