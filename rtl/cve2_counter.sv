@@ -16,7 +16,7 @@ module cve2_counter #(
   input  logic        counter_inc_i,
   input  logic        counterh_we_i,
   input  logic        counter_we_i,
-  input  logic [31:0] counter_val_i,
+  input  logic [63:0] counter_val_i,
   output logic [63:0] counter_val_o,
   output logic [63:0] counter_val_upd_o
 );
@@ -34,10 +34,9 @@ module cve2_counter #(
   always_comb begin
     // Write
     we = counter_we_i | counterh_we_i;
-    counter_load[63:32] = counter[63:32];
-    counter_load[31:0]  = counter_val_i;
+    counter_load        = counter_val_i;
     if (counterh_we_i) begin
-      counter_load[63:32] = counter_val_i;
+      counter_load[63:32] = counter_val_i[31:0];
       counter_load[31:0]  = counter[31:0];
     end
 

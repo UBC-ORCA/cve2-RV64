@@ -37,7 +37,7 @@ module cve2_controller #(
   input  logic                  instr_is_compressed_i,   // instr is compressed
   input  logic                  instr_fetch_err_i,       // instr has error
   input  logic                  instr_fetch_err_plus2_i, // instr error is x32
-  input  logic [31:0]           pc_id_i,                 // instr address
+  input  logic [63:0]           pc_id_i,                 // instr address
 
   // to IF-ID pipeline stage
   output logic                  instr_valid_clear_o,     // kill instr in IF-ID reg
@@ -54,7 +54,7 @@ module cve2_controller #(
   output cve2_pkg::exc_cause_e  exc_cause_o,             // for IF stage, CSRs
 
   // LSU
-  input  logic [31:0]           lsu_addr_last_i,         // for mtval
+  input  logic [63:0]           lsu_addr_last_i,         // for mtval
   input  logic                  load_err_i,
   input  logic                  store_err_i,
 
@@ -86,7 +86,7 @@ module cve2_controller #(
   output logic                  csr_restore_mret_id_o,
   output logic                  csr_restore_dret_id_o,
   output logic                  csr_save_cause_o,
-  output logic [31:0]           csr_mtval_o,
+  output logic [63:0]           csr_mtval_o,
   input  cve2_pkg::priv_lvl_e   priv_mode_i,
   input  logic                  csr_mstatus_tw_i,
 
@@ -592,11 +592,12 @@ module cve2_controller #(
           unique case (1'b1)
             instr_fetch_err_prio: begin
               exc_cause_o = EXC_CAUSE_INSTR_ACCESS_FAULT;
-              csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 32'd2) : pc_id_i;
+              csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 64'd2) : pc_id_i;
             end
             illegal_insn_prio: begin
               exc_cause_o = EXC_CAUSE_ILLEGAL_INSN;
-              csr_mtval_o = instr_is_compressed_i ? {16'b0, instr_compressed_i} : instr_i;
+              csr_mtval_o = instr_is_compressed_i ? {48'b0, instr_compressed_i} :
+                                                   {32'b0, instr_i};
             end
             ecall_insn_prio: begin
               exc_cause_o = (priv_mode_i == PRIV_LVL_M) ? EXC_CAUSE_ECALL_MMODE :

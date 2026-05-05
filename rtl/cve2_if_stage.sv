@@ -17,12 +17,12 @@ module cve2_if_stage import cve2_pkg::*; (
   input  logic                         clk_i,
   input  logic                         rst_ni,
 
-  input  logic [31:0]                  boot_addr_i,              // also used for mtvec
+  input  logic [63:0]                  boot_addr_i,              // also used for mtvec
   input  logic                         req_i,                    // instruction request control
 
   // instruction cache interface
   output logic                        instr_req_o,
-  output logic [31:0]                 instr_addr_o,
+  output logic [63:0]                 instr_addr_o,
   input  logic                        instr_gnt_i,
   input  logic                        instr_rvalid_i,
   input  logic [31:0]                 instr_rdata_i,
@@ -43,8 +43,8 @@ module cve2_if_stage import cve2_pkg::*; (
   output logic                        instr_fetch_err_plus2_o,  // bus error misaligned
   output logic                        illegal_c_insn_id_o,      // compressed decoder thinks this
                                                                 // is an invalid instr
-  output logic [31:0]                 pc_if_o,
-  output logic [31:0]                 pc_id_o,
+  output logic [63:0]                 pc_if_o,
+  output logic [63:0]                 pc_id_o,
   input  logic                        pmp_err_if_i,
   input  logic                        pmp_err_if_plus2_i,
 
@@ -56,19 +56,19 @@ module cve2_if_stage import cve2_pkg::*; (
   input  exc_cause_e                  exc_cause,                // selects ISR address for
                                                                 // vectorized interrupt lines
   // jump and branch target
-  input  logic [31:0]                 branch_target_ex_i,       // branch/jump target address
+  input  logic [63:0]                 branch_target_ex_i,       // branch/jump target address
 
   // CSRs
-  input  logic [31:0]                 csr_mepc_i,               // PC to restore after handling
+  input  logic [63:0]                 csr_mepc_i,               // PC to restore after handling
                                                                 // the interrupt/exception
-  input  logic [31:0]                 csr_depc_i,               // PC to restore after handling
+  input  logic [63:0]                 csr_depc_i,               // PC to restore after handling
                                                                 // the debug request
-  input  logic [31:0]                 csr_mtvec_i,              // base PC to jump to on exception
+  input  logic [63:0]                 csr_mtvec_i,              // base PC to jump to on exception
   output logic                        csr_mtvec_init_o,         // tell CS regfile to init mtvec
 
   // debug signals
-  input logic [31:0]                  dm_halt_addr_i,           // default 32'h1A110800
-  input logic [31:0]                  dm_exception_addr_i,      // default 32'h1A110808
+  input logic [63:0]                  dm_halt_addr_i,           // default 32'h1A110800
+  input logic [63:0]                  dm_exception_addr_i,      // default 32'h1A110808
 
   // pipeline stall
   input  logic                        id_in_ready_i,            // ID stage is ready for new instr
@@ -83,13 +83,13 @@ module cve2_if_stage import cve2_pkg::*; (
   // prefetch buffer related signals
   logic              prefetch_busy;
   logic              branch_req;
-  logic       [31:0] fetch_addr_n;
+  logic       [63:0] fetch_addr_n;
   logic              unused_fetch_addr_n0;
 
   logic              fetch_valid;
   logic              fetch_ready;
   logic       [31:0] fetch_rdata;
-  logic       [31:0] fetch_addr;
+  logic       [63:0] fetch_addr;
   logic              fetch_err;
   logic              fetch_err_plus2;
 
@@ -101,7 +101,7 @@ module cve2_if_stage import cve2_pkg::*; (
   logic              if_instr_err;
   logic              if_instr_err_plus2;
 
-  logic       [31:0] exc_pc;
+  logic       [63:0] exc_pc;
 
   logic        [6:0] irq_id;
   logic              unused_irq_bit;
@@ -123,11 +123,11 @@ module cve2_if_stage import cve2_pkg::*; (
   // exception PC selection mux
   always_comb begin : exc_pc_mux
     unique case (exc_pc_mux_i)
-      EXC_PC_EXC:     exc_pc = { csr_mtvec_i[31:8], 8'h00              };
-      EXC_PC_IRQ:     exc_pc = { csr_mtvec_i[31:8], irq_id[5:0], 2'b00 };
+      EXC_PC_EXC:     exc_pc = { csr_mtvec_i[63:8], 8'h00              };
+      EXC_PC_IRQ:     exc_pc = { csr_mtvec_i[63:8], irq_id[5:0], 2'b00 };
       EXC_PC_DBD:     exc_pc = dm_halt_addr_i;
       EXC_PC_DBG_EXC: exc_pc = dm_exception_addr_i;
-      default:        exc_pc = { csr_mtvec_i[31:8], 8'h00              };
+      default:        exc_pc = { csr_mtvec_i[63:8], 8'h00              };
     endcase
   end
 
@@ -137,12 +137,12 @@ module cve2_if_stage import cve2_pkg::*; (
   // fetch address selection mux
   always_comb begin : fetch_addr_mux
     unique case (pc_mux_internal)
-      PC_BOOT: fetch_addr_n = { boot_addr_i[31:2], 2'b00 };
+      PC_BOOT: fetch_addr_n = { boot_addr_i[63:2], 2'b00 };
       PC_JUMP: fetch_addr_n = branch_target_ex_i;
       PC_EXC:  fetch_addr_n = exc_pc;                       // set PC to exception handler
-      PC_ERET: fetch_addr_n = csr_mepc_i;                   // restore PC when returning from EXC
+      PC_ERET: fetch_addr_n = csr_mepc_i;  // restore PC when returning from EXC
       PC_DRET: fetch_addr_n = csr_depc_i;
-      default: fetch_addr_n = { boot_addr_i[31:2], 2'b00 };
+      default: fetch_addr_n = { boot_addr_i[63:2], 2'b00 };
     endcase
   end
 
@@ -158,7 +158,7 @@ module cve2_if_stage import cve2_pkg::*; (
       .req_i               ( req_i                      ),
 
       .branch_i            ( branch_req                 ),
-      .addr_i              ( {fetch_addr_n[31:1], 1'b0} ),
+      .addr_i              ( {fetch_addr_n[63:1], 1'b0} ),
 
       .ready_i             ( fetch_ready                ),
       .valid_o             ( fetch_valid                ),

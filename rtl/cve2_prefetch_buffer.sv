@@ -18,20 +18,20 @@ module cve2_prefetch_buffer #(
   input  logic        req_i,
 
   input  logic        branch_i,
-  input  logic [31:0] addr_i,
+  input  logic [63:0] addr_i,
 
 
   input  logic        ready_i,
   output logic        valid_o,
   output logic [31:0] rdata_o,
-  output logic [31:0] addr_o,
+  output logic [63:0] addr_o,
   output logic        err_o,
   output logic        err_plus2_o,
 
   // goes to instruction memory / instruction cache
   output logic        instr_req_o,
   input  logic        instr_gnt_i,
-  output logic [31:0] instr_addr_o,
+  output logic [63:0] instr_addr_o,
   input  logic [31:0] instr_rdata_i,
   input  logic        instr_err_i,
   input  logic        instr_rvalid_i,
@@ -49,14 +49,14 @@ module cve2_prefetch_buffer #(
   logic [NUM_REQS-1:0] branch_discard_n, branch_discard_s, branch_discard_q;
   logic [NUM_REQS-1:0] rdata_outstanding_rev;
 
-  logic [31:0]         stored_addr_d, stored_addr_q;
+  logic [63:0]         stored_addr_d, stored_addr_q;
   logic                stored_addr_en;
-  logic [31:0]         fetch_addr_d, fetch_addr_q;
+  logic [63:0]         fetch_addr_d, fetch_addr_q;
   logic                fetch_addr_en;
-  logic [31:0]         instr_addr, instr_addr_w_aligned;
+  logic [63:0]         instr_addr, instr_addr_w_aligned;
 
   logic                fifo_valid;
-  logic [31:0]         fifo_addr;
+  logic [63:0]         fifo_addr;
   logic                fifo_ready;
   logic                fifo_clear;
   logic [NUM_REQS-1:0] fifo_busy;
@@ -162,9 +162,9 @@ module cve2_prefetch_buffer #(
   assign fetch_addr_en = branch_i | (valid_new_req & ~valid_req_q);
 
   assign fetch_addr_d = (branch_i            ? addr_i :
-                                               {fetch_addr_q[31:2], 2'b00}) +
+                                               {fetch_addr_q[63:2], 2'b00}) +
                         // Current address + 4
-                        {{29{1'b0}},(valid_new_req & ~valid_req_q),2'b00};
+                        {61'd0, (valid_new_req & ~valid_req_q), 2'b00};
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
@@ -179,7 +179,7 @@ module cve2_prefetch_buffer #(
                       branch_i            ? addr_i :
                                             fetch_addr_q;
 
-  assign instr_addr_w_aligned = {instr_addr[31:2], 2'b00};
+  assign instr_addr_w_aligned = {instr_addr[63:2], 2'b00};
 
   ///////////////////////////////
   // Request outstanding queue //

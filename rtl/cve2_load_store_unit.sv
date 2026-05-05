@@ -27,7 +27,7 @@ module cve2_load_store_unit
   input  logic         data_err_i,
   input  logic         data_pmp_err_i,
 
-  output logic [31:0]  data_addr_o,
+  output logic [63:0]  data_addr_o,
   output logic         data_we_o,
   output logic [3:0]   data_be_o,
   output logic [31:0]  data_wdata_o,
@@ -45,11 +45,11 @@ module cve2_load_store_unit
   output logic         lsu_rdata_valid_o,
   input  logic         lsu_req_i,            // data request                     -> from ID/EX
 
-  input  logic [31:0]  adder_result_ex_i,    // address computed in ALU          -> from ID/EX
+  input  logic [63:0]  adder_result_ex_i,    // address computed in ALU          -> from ID/EX
 
   output logic         addr_incr_req_o,      // request address increment for
                                               // misaligned accesses              -> to ID/EX
-  output logic [31:0]  addr_last_o,          // address of last transaction      -> to controller
+  output logic [63:0]  addr_last_o,          // address of last transaction      -> to controller
                                               // -> mtval
                                               // -> AGU for misaligned accesses
 
@@ -65,9 +65,9 @@ module cve2_load_store_unit
   output logic         perf_store_o
 );
 
-  logic [31:0]  data_addr;
-  logic [31:0]  data_addr_w_aligned;
-  logic [31:0]  addr_last_q, addr_last_d;
+  logic [63:0]  data_addr;
+  logic [63:0]  data_addr_w_aligned;
+  logic [63:0]  addr_last_q, addr_last_d;
 
   logic         addr_update;
   logic         ctrl_update;
@@ -536,7 +536,7 @@ module cve2_load_store_unit
   end
 
   // output data address must be word aligned
-  assign data_addr_w_aligned = {data_addr[31:2], 2'b00};
+  assign data_addr_w_aligned = {data_addr[63:2], 2'b00};
 
   // output to data interface
   assign data_addr_o   = data_addr_w_aligned;

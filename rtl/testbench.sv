@@ -53,7 +53,13 @@ module testbench;
   // IF/ID PC
   // --------------------
   logic [31:0] pc_id_i;
-  initial pc_id_i = 32'h0000_0000;
+  logic [31:0] pc_id_upper_i;
+  logic [1:0]  pc_id_tag_i;
+  initial begin
+    pc_id_i       = 32'h0000_0000;
+    pc_id_upper_i = 32'h0000_0000;
+    pc_id_tag_i   = 2'b10;
+  end
 
   // --------------------
   // Branch decision feedback (EX->ID)
@@ -130,15 +136,108 @@ module testbench;
   logic          csr_save_if_o, csr_save_id_o;
   logic          csr_restore_mret_id_o, csr_restore_dret_id_o;
   logic          csr_save_cause_o;
-  logic [31:0]   csr_mtval_o;
+  logic [63:0]   csr_mtval_o;
+  logic [31:0]   csr_wdata_o;
+  logic [1:0]    csr_wdata_tag_o;
+  logic          csr_wdata_upper_o;
+  logic          csr_wdata_capture_o;
+  logic          csr_rdata_upper_o;
+  logic          csr_rdata_capture_o;
   priv_lvl_e     priv_mode_i;
   logic          csr_mstatus_tw_i;
+  logic [63:0]   csr_rdata_full_i;
   logic [31:0]   csr_rdata_i;
+  logic [1:0]    csr_rdata_tag_i;
 
   initial begin
     priv_mode_i       = PRIV_LVL_M;
     csr_mstatus_tw_i  = 1'b0;
-    csr_rdata_i       = 32'h0;
+    csr_rdata_full_i  = 64'h0;
+  end
+
+  function automatic logic [31:0] tb_inferred_upper(input logic [1:0] tag);
+    unique case (tag)
+      2'b11:   tb_inferred_upper = 32'hffff_ffff;
+      default: tb_inferred_upper = 32'h0000_0000;
+    endcase
+  endfunction
+
+  function automatic logic [1:0] tb_tag_from_upper(input logic [31:0] upper);
+    if (upper == 32'h0000_0000) begin
+      tb_tag_from_upper = 2'b10;
+    end else if (upper == 32'hffff_ffff) begin
+      tb_tag_from_upper = 2'b11;
+    end else begin
+      tb_tag_from_upper = 2'b01;
+    end
+  endfunction
+
+  assign csr_rdata_i     = csr_rdata_upper_o ? csr_rdata_full_i[63:32] :
+                                                csr_rdata_full_i[31:0];
+  assign csr_rdata_tag_i = tb_tag_from_upper(csr_rdata_full_i[63:32]);
+
+  // Standalone CSR-file harness for mechanism 7 storage/path checks.
+  logic        csr64_access_i;
+  csr_num_e    csr64_addr_i;
+  logic [31:0] csr64_wdata_i;
+  logic [1:0]  csr64_wdata_tag_i;
+  logic        csr64_wdata_upper_i;
+  logic        csr64_wdata_capture_i;
+  csr_op_e     csr64_op_i;
+  logic        csr64_op_en_i;
+  logic [31:0] csr64_rdata_o;
+  logic [1:0]  csr64_rdata_tag_o;
+  logic        csr64_rdata_upper_i;
+  logic        csr64_rdata_capture_i;
+  logic [63:0] csr64_mepc_o;
+  logic [63:0] csr64_depc_o;
+  logic [63:0] csr64_mtvec_o;
+  logic        csr64_mtvec_init_i;
+  logic [63:0] csr64_pc_if_i;
+  logic [63:0] csr64_pc_id_i;
+  logic        csr64_save_if_i;
+  logic        csr64_save_id_i;
+  logic        csr64_restore_mret_i;
+  logic        csr64_restore_dret_i;
+  logic        csr64_save_cause_i;
+  exc_cause_e  csr64_mcause_i;
+  logic [63:0] csr64_mtval_i;
+  logic        csr64_illegal_o;
+  priv_lvl_e   csr64_priv_mode_id_o;
+  priv_lvl_e   csr64_priv_mode_lsu_o;
+  logic        csr64_mstatus_tw_o;
+  logic        csr64_irq_pending_o;
+  irqs_t       csr64_irqs_o;
+  logic        csr64_mstatus_mie_o;
+  pmp_cfg_t    csr64_pmp_cfg_o [4];
+  logic [33:0] csr64_pmp_addr_o[4];
+  pmp_mseccfg_t csr64_pmp_mseccfg_o;
+  logic        csr64_debug_single_step_o;
+  logic        csr64_debug_ebreakm_o;
+  logic        csr64_debug_ebreaku_o;
+  logic        csr64_trigger_match_o;
+
+  initial begin
+    csr64_access_i       = 1'b0;
+    csr64_addr_i         = CSR_MSCRATCH;
+    csr64_wdata_i        = 32'h0;
+    csr64_wdata_tag_i    = 2'b10;
+    csr64_wdata_upper_i  = 1'b0;
+    csr64_wdata_capture_i = 1'b0;
+    csr64_op_i           = CSR_OP_READ;
+    csr64_op_en_i        = 1'b0;
+    csr64_rdata_upper_i  = 1'b0;
+    csr64_rdata_capture_i = 1'b0;
+    csr64_mtvec_init_i   = 1'b0;
+    csr64_pc_if_i        = 64'h0;
+    csr64_pc_id_i        = 64'h0;
+    csr64_save_if_i      = 1'b0;
+    csr64_save_id_i      = 1'b0;
+    csr64_restore_mret_i = 1'b0;
+    csr64_restore_dret_i = 1'b0;
+    csr64_save_cause_i   = 1'b0;
+    csr64_mcause_i       = EXC_CAUSE_INSN_ADDR_MISA;
+    csr64_mtval_i        = 64'h0;
   end
 
   // --------------------
@@ -151,7 +250,7 @@ module testbench;
   logic [31:0] lsu_wdata_o;
 
   logic        lsu_addr_incr_req_i;
-  logic [31:0] lsu_addr_last_i;
+  logic [63:0] lsu_addr_last_i;
   logic        lsu_load_err_i, lsu_store_err_i;
 
   logic        data_req_o;
@@ -159,7 +258,7 @@ module testbench;
   logic        data_rvalid_i;
   logic        data_err_i;
   logic        data_pmp_err_i;
-  logic [31:0] data_addr_o;
+  logic [63:0] data_addr_o;
   logic        data_we_o;
   logic [3:0]  data_be_o;
   logic [31:0] data_wdata_o;
@@ -186,6 +285,8 @@ module testbench;
   x_register_t x_register_o;
   logic        r_a_upper_o, r_b_upper_o;
   logic [1:0]  r_a_tag_i, r_b_tag_i;
+  logic [63:0] lsu_addr_ex_o;
+  logic [63:0] pc_target_ex_o;
 
   logic        x_commit_valid_o;
   x_commit_t   x_commit_o;
@@ -309,6 +410,8 @@ module testbench;
     .instr_fetch_err_plus2_i,
 
     .pc_id_i,
+    .pc_id_upper_i,
+    .pc_id_tag_i,
 
     .ex_valid_i,
     .lsu_resp_valid_i,
@@ -342,6 +445,12 @@ module testbench;
     .csr_restore_dret_id_o,
     .csr_save_cause_o,
     .csr_mtval_o,
+    .csr_wdata_o,
+    .csr_wdata_tag_o,
+    .csr_wdata_upper_o,
+    .csr_wdata_capture_o,
+    .csr_rdata_upper_o,
+    .csr_rdata_capture_o,
     .priv_mode_i,
     .csr_mstatus_tw_i,
     .illegal_csr_insn_i,
@@ -394,6 +503,7 @@ module testbench;
 
     .result_ex_i(result_ex_i),
     .csr_rdata_i,
+    .csr_rdata_tag_i,
 
     .rf_raddr_a_o,
     .rf_rdata_a_i,
@@ -407,6 +517,8 @@ module testbench;
     .rf_we_id_o,
     .rf_w_upper_id_o,
     .w_tag_id_o(w_tag_id),
+    .lsu_addr_ex_o,
+    .pc_target_ex_o,
 
     .en_wb_o,
     .instr_perf_count_id_o,
@@ -418,6 +530,89 @@ module testbench;
     .perf_wfi_wait_o,
     .perf_div_wait_o,
     .instr_id_done_o
+  );
+
+  // --------------------
+  // Instantiate CSR file
+  // --------------------
+  cve2_cs_registers #(
+    .PMPEnable(1'b0),
+    .RV32E    (1'b0),
+    .RV32M    (RV32MFast),
+    .RV32B    (RV32BNone)
+  ) dut_csrs64 (
+    .clk_i,
+    .rst_ni,
+
+    .hart_id_i(32'h0),
+
+    .priv_mode_id_o (csr64_priv_mode_id_o),
+    .priv_mode_lsu_o(csr64_priv_mode_lsu_o),
+    .csr_mstatus_tw_o(csr64_mstatus_tw_o),
+
+    .csr_mtvec_o     (csr64_mtvec_o),
+    .csr_mtvec_init_i(csr64_mtvec_init_i),
+    .boot_addr_i     (64'h0000_0000_0000_0080),
+
+    .csr_access_i(csr64_access_i),
+    .csr_addr_i  (csr64_addr_i),
+    .csr_wdata_i        (csr64_wdata_i),
+    .csr_wdata_tag_i    (csr64_wdata_tag_i),
+    .csr_wdata_upper_i  (csr64_wdata_upper_i),
+    .csr_wdata_capture_i(csr64_wdata_capture_i),
+    .csr_op_i    (csr64_op_i),
+    .csr_op_en_i (csr64_op_en_i),
+    .csr_rdata_o        (csr64_rdata_o),
+    .csr_rdata_tag_o    (csr64_rdata_tag_o),
+    .csr_rdata_upper_i  (csr64_rdata_upper_i),
+    .csr_rdata_capture_i(csr64_rdata_capture_i),
+
+    .irq_software_i(1'b0),
+    .irq_timer_i   (1'b0),
+    .irq_external_i(1'b0),
+    .irq_fast_i    (16'h0000),
+    .nmi_mode_i    (1'b0),
+    .irq_pending_o (csr64_irq_pending_o),
+    .irqs_o        (csr64_irqs_o),
+    .csr_mstatus_mie_o(csr64_mstatus_mie_o),
+    .csr_mepc_o        (csr64_mepc_o),
+
+    .csr_pmp_cfg_o    (csr64_pmp_cfg_o),
+    .csr_pmp_addr_o   (csr64_pmp_addr_o),
+    .csr_pmp_mseccfg_o(csr64_pmp_mseccfg_o),
+
+    .debug_mode_i       (1'b0),
+    .debug_cause_i      (DBG_CAUSE_NONE),
+    .debug_csr_save_i   (1'b0),
+    .csr_depc_o         (csr64_depc_o),
+    .debug_single_step_o(csr64_debug_single_step_o),
+    .debug_ebreakm_o    (csr64_debug_ebreakm_o),
+    .debug_ebreaku_o    (csr64_debug_ebreaku_o),
+    .trigger_match_o    (csr64_trigger_match_o),
+
+    .pc_if_i(csr64_pc_if_i),
+    .pc_id_i(csr64_pc_id_i),
+
+    .csr_save_if_i      (csr64_save_if_i),
+    .csr_save_id_i      (csr64_save_id_i),
+    .csr_restore_mret_i (csr64_restore_mret_i),
+    .csr_restore_dret_i (csr64_restore_dret_i),
+    .csr_save_cause_i   (csr64_save_cause_i),
+    .csr_mcause_i       (csr64_mcause_i),
+    .csr_mtval_i        (csr64_mtval_i),
+    .illegal_csr_insn_o (csr64_illegal_o),
+
+    .instr_ret_i           (1'b0),
+    .instr_ret_compressed_i(1'b0),
+    .iside_wait_i          (1'b0),
+    .jump_i                (1'b0),
+    .branch_i              (1'b0),
+    .branch_taken_i        (1'b0),
+    .mem_load_i            (1'b0),
+    .mem_store_i           (1'b0),
+    .dside_wait_i          (1'b0),
+    .wfi_wait_i            (1'b0),
+    .div_wait_i            (1'b0)
   );
 
   // --------------------
@@ -493,7 +688,7 @@ module testbench;
     .lsu_rdata_valid_o(rf_we_lsu_i),
     .lsu_req_i        (lsu_req_o),
 
-    .adder_result_ex_i(alu_adder_result_ex_o),
+    .adder_result_ex_i(lsu_addr_ex_o),
 
     .addr_incr_req_o(lsu_addr_incr_req_i),
     .addr_last_o    (lsu_addr_last_i),
@@ -664,6 +859,15 @@ module testbench;
     write_rf_half(addr, data, 1'b0, 2'b00);
   endtask
 
+  task automatic set_pc64(input logic [31:0] lower_val,
+                          input logic [31:0] upper_val,
+                          input logic [1:0]  tag);
+    pc_id_i       = lower_val;
+    pc_id_upper_i = upper_val;
+    pc_id_tag_i   = tag;
+    #1;
+  endtask
+
 
   localparam logic [31:0] ADD_X3_X1_X2 = 32'h002081b3;
   localparam logic [31:0] SUB_X3_X1_X2 = 32'h402081b3;
@@ -714,6 +918,17 @@ module testbench;
   localparam logic [31:0] SLLI_X3_X1_36   = 32'h02409193; // SLLI x3, x1, 36
   localparam logic [31:0] SRLI_X3_X1_36   = 32'h0240d193; // SRLI x3, x1, 36
   localparam logic [31:0] SRAI_X3_X1_36   = 32'h4240d193; // SRAI x3, x1, 36
+  localparam logic [31:0] LUI_X3_POS       = 32'h7ffff1b7; // LUI   x3, 0x7ffff
+  localparam logic [31:0] LUI_X3_NEG       = 32'h800001b7; // LUI   x3, 0x80000
+  localparam logic [31:0] AUIPC_X3_1       = 32'h00001197; // AUIPC x3, 0x1
+  localparam logic [31:0] AUIPC_X3_2       = 32'h00002197; // AUIPC x3, 0x2
+  localparam logic [31:0] AUIPC_X3_NEG     = 32'hfffff197; // AUIPC x3, -0x1
+  localparam logic [31:0] JAL_X3_0         = 32'h000001ef; // JAL   x3, 0
+  localparam logic [31:0] JALR_X3_X1_0     = 32'h000081e7; // JALR  x3, 0(x1)
+  localparam logic [31:0] CSRRS_X3_MISA_X0 = 32'h301021f3; // CSRRS x3, misa, x0
+  localparam logic [31:0] CSRRS_X3_MEPC_X0 = 32'h341021f3; // CSRRS x3, mepc, x0
+  localparam logic [31:0] CSRRW_X3_MEPC_X1 = 32'h341091f3; // CSRRW x3, mepc, x1
+  localparam logic [31:0] CSRRWI_X3_MEPC_5 = 32'h3412d1f3; // CSRRWI x3, mepc, 5
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -732,6 +947,127 @@ module testbench;
       cycles_taken++;
       @(posedge clk_i);
       #1;
+    end
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_csr(input  logic [31:0]  encoding,
+                            input  logic [63:0]  csr_read_data,
+                            output int unsigned  cycles_taken);
+    csr_rdata_full_i = csr_read_data;
+    inject_instr(encoding, cycles_taken);
+    csr_rdata_full_i = 64'h0000_0000_0000_0000;
+  endtask
+
+  task automatic inject_csr_capture_wdata(input  logic [31:0] encoding,
+                                          input  logic [63:0] csr_read_data,
+                                          output int unsigned cycles_taken,
+                                          output logic [63:0] captured_wdata);
+    logic captured;
+    logic lower_seen;
+    logic [31:0] captured_lower;
+
+    captured       = 1'b0;
+    lower_seen     = 1'b0;
+    captured_wdata = 64'h0000_0000_0000_0000;
+    captured_lower = 32'h0000_0000;
+    csr_rdata_full_i = csr_read_data;
+
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    #1;
+    if (csr_wdata_capture_o) begin
+      captured_lower = csr_wdata_o;
+      lower_seen     = 1'b1;
+    end
+
+    @(posedge clk_i);
+    #1;
+    cycles_taken = 1;
+    if (csr_wdata_capture_o) begin
+      captured_lower = csr_wdata_o;
+      lower_seen     = 1'b1;
+    end
+    if (csr_op_en_o) begin
+      captured_wdata = csr_wdata_upper_o ?
+                       {csr_wdata_o, captured_lower} :
+                       {tb_inferred_upper(csr_wdata_tag_o), csr_wdata_o};
+      captured       = 1'b1;
+    end
+
+    while (dut_id.id_fsm_q != 3'b000) begin
+      cycles_taken++;
+      @(posedge clk_i);
+      #1;
+      if (csr_wdata_capture_o) begin
+        captured_lower = csr_wdata_o;
+        lower_seen     = 1'b1;
+      end
+      if (csr_op_en_o) begin
+        if (csr_wdata_upper_o && !lower_seen) begin
+          $error("CSR upper write observed before lower capture for instruction %08h", encoding);
+        end
+        captured_wdata = csr_wdata_upper_o ?
+                         {csr_wdata_o, captured_lower} :
+                         {tb_inferred_upper(csr_wdata_tag_o), csr_wdata_o};
+        captured       = 1'b1;
+      end
+    end
+
+    if (!captured) begin
+      $error("No CSR write data captured for instruction %08h", encoding);
+    end
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    csr_rdata_full_i  = 64'h0000_0000_0000_0000;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_instr_capture_target(input  logic [31:0] encoding,
+                                             output int unsigned cycles_taken,
+                                             output logic [63:0] pc_target);
+    logic target_seen;
+
+    target_seen = 1'b0;
+    pc_target   = 64'h0000_0000_0000_0000;
+
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+
+    @(posedge clk_i);
+    #1;
+    cycles_taken = 1;
+    if (pc_set_o) begin
+      pc_target   = pc_target_ex_o;
+      target_seen = 1'b1;
+    end
+
+    while (dut_id.id_fsm_q != 3'b000) begin
+      cycles_taken++;
+      @(posedge clk_i);
+      #1;
+      if (pc_set_o) begin
+        pc_target   = pc_target_ex_o;
+        target_seen = 1'b1;
+      end
+    end
+
+    if (!target_seen) begin
+      $error("No PC target captured for instruction %08h", encoding);
     end
 
     instr_valid_i     = 1'b0;
@@ -770,6 +1106,40 @@ module testbench;
     data_rdata_i      = 32'h0000_0000;
 
     repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_load_explicit_addr(input  logic [31:0] encoding,
+                                           input  logic [31:0] mem_word,
+                                           output int unsigned cycles_taken,
+                                           output logic [63:0] load_addr);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    data_rvalid_i     = 1'b0;
+    data_rdata_i      = 32'h0000_0000;
+
+    @(posedge clk_i);
+    #1;
+    load_addr = data_addr_o;
+
+    @(posedge clk_i);
+    #1;
+    data_rdata_i  = mem_word;
+    data_rvalid_i = 1'b1;
+
+    @(posedge clk_i);
+    #1;
+    cycles_taken  = 3;
+    data_rvalid_i = 1'b0;
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    data_rdata_i      = 32'h0000_0000;
+
+    repeat (6) @(posedge clk_i);
   endtask
 
   task automatic inject_ld(input  logic [31:0]  encoding,
@@ -812,10 +1182,10 @@ module testbench;
 
   task automatic inject_sd(input  logic [31:0]  encoding,
                            output int unsigned  cycles_taken,
-                           output logic [31:0]  lower_addr,
+                           output logic [63:0]  lower_addr,
                            output logic [31:0]  lower_wdata,
                            output logic [3:0]   lower_be,
-                           output logic [31:0]  upper_addr,
+                           output logic [63:0]  upper_addr,
                            output logic [31:0]  upper_wdata,
                            output logic [3:0]   upper_be);
     @(posedge clk_i);
@@ -850,6 +1220,53 @@ module testbench;
     @(posedge clk_i);
     #1;
     cycles_taken  = 3;
+    data_rvalid_i = 1'b0;
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+    data_rdata_i      = 32'h0000_0000;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_sd_explicit_addr(input  logic [31:0]  encoding,
+                                         output int unsigned  cycles_taken,
+                                         output logic [63:0]  lower_addr,
+                                         output logic [31:0]  lower_wdata,
+                                         output logic [3:0]   lower_be,
+                                         output logic [63:0]  upper_addr,
+                                         output logic [31:0]  upper_wdata,
+                                         output logic [3:0]   upper_be);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    data_rvalid_i     = 1'b0;
+    data_rdata_i      = 32'h0000_0000;
+
+    @(posedge clk_i);
+    #1;
+    lower_addr  = data_addr_o;
+    lower_wdata = data_wdata_o;
+    lower_be    = data_be_o;
+    data_rvalid_i = 1'b0;
+
+    @(posedge clk_i);
+    #1;
+    upper_addr  = data_addr_o;
+    upper_wdata = data_wdata_o;
+    upper_be    = data_be_o;
+    data_rvalid_i = 1'b1;
+
+    @(posedge clk_i);
+    #1;
+    data_rvalid_i = 1'b1;
+
+    @(posedge clk_i);
+    #1;
+    cycles_taken  = 4;
     data_rvalid_i = 1'b0;
 
     instr_valid_i     = 1'b0;
@@ -941,13 +1358,138 @@ module testbench;
     end
   endtask
 
+  task automatic check_addr64(input string      test_name,
+                              input logic [63:0] actual_addr,
+                              input logic [63:0] expected_addr);
+    if (actual_addr !== expected_addr) begin
+      $error("%s FAIL: addr = %016h, expected %016h", test_name, actual_addr, expected_addr);
+    end else begin
+      $display("%s PASS: addr = %016h", test_name, actual_addr);
+    end
+  endtask
+
+  task automatic check_value64(input string      test_name,
+                               input logic [63:0] actual_value,
+                               input logic [63:0] expected_value);
+    if (actual_value !== expected_value) begin
+      $error("%s FAIL: value = %016h, expected %016h",
+             test_name, actual_value, expected_value);
+    end else begin
+      $display("%s PASS: value = %016h", test_name, actual_value);
+    end
+  endtask
+
+  task automatic csr64_write(input csr_num_e    csr_addr,
+                             input logic [63:0] csr_wdata);
+    logic [1:0] csr_wdata_tag;
+
+    csr_wdata_tag = tb_tag_from_upper(csr_wdata[63:32]);
+
+    if (csr_wdata_tag == 2'b01) begin
+      @(posedge clk_i);
+      #1;
+      csr64_access_i        = 1'b1;
+      csr64_addr_i          = csr_addr;
+      csr64_wdata_i         = csr_wdata[31:0];
+      csr64_wdata_tag_i     = csr_wdata_tag;
+      csr64_wdata_upper_i   = 1'b0;
+      csr64_wdata_capture_i = 1'b1;
+      csr64_op_i            = CSR_OP_WRITE;
+      csr64_op_en_i         = 1'b0;
+
+      @(posedge clk_i);
+      #1;
+      csr64_wdata_i         = csr_wdata[63:32];
+      csr64_wdata_upper_i   = 1'b1;
+      csr64_wdata_capture_i = 1'b0;
+      csr64_op_en_i         = 1'b1;
+    end else begin
+      @(posedge clk_i);
+      #1;
+      csr64_access_i        = 1'b1;
+      csr64_addr_i          = csr_addr;
+      csr64_wdata_i         = csr_wdata[31:0];
+      csr64_wdata_tag_i     = csr_wdata_tag;
+      csr64_wdata_upper_i   = 1'b0;
+      csr64_wdata_capture_i = 1'b0;
+      csr64_op_i            = CSR_OP_WRITE;
+      csr64_op_en_i         = 1'b1;
+    end
+
+    @(posedge clk_i);
+    #1;
+    csr64_access_i         = 1'b0;
+    csr64_op_en_i          = 1'b0;
+    csr64_op_i             = CSR_OP_READ;
+    csr64_wdata_i          = 32'h0000_0000;
+    csr64_wdata_tag_i      = 2'b10;
+    csr64_wdata_upper_i    = 1'b0;
+    csr64_wdata_capture_i  = 1'b0;
+  endtask
+
+  task automatic csr64_read_check(input string      test_name,
+                                  input csr_num_e   csr_addr,
+                                  input logic [63:0] expected_value);
+    logic [31:0] actual_lower;
+    logic [31:0] actual_upper;
+    logic [1:0]  actual_tag;
+    logic [63:0] actual_value;
+
+    @(posedge clk_i);
+    #1;
+    csr64_access_i        = 1'b1;
+    csr64_addr_i          = csr_addr;
+    csr64_op_i            = CSR_OP_READ;
+    csr64_op_en_i         = 1'b0;
+    csr64_rdata_upper_i   = 1'b0;
+    csr64_rdata_capture_i = 1'b0;
+    #1;
+    actual_lower = csr64_rdata_o;
+    actual_tag   = csr64_rdata_tag_o;
+
+    if (actual_tag == 2'b01) begin
+      csr64_rdata_capture_i = 1'b1;
+      @(posedge clk_i);
+      #1;
+      csr64_rdata_capture_i = 1'b0;
+      csr64_rdata_upper_i   = 1'b1;
+      #1;
+      actual_upper = csr64_rdata_o;
+    end else begin
+      actual_upper = tb_inferred_upper(actual_tag);
+    end
+
+    actual_value = {actual_upper, actual_lower};
+    check_value64(test_name, actual_value, expected_value);
+    csr64_access_i      = 1'b0;
+    csr64_rdata_upper_i = 1'b0;
+  endtask
+
+  task automatic csr64_save_id_exception(input logic [63:0] pc_value,
+                                         input logic [63:0] mtval_value);
+    @(posedge clk_i);
+    #1;
+    csr64_pc_id_i      = pc_value;
+    csr64_mtval_i      = mtval_value;
+    csr64_mcause_i     = EXC_CAUSE_ILLEGAL_INSN;
+    csr64_save_id_i    = 1'b1;
+    csr64_save_cause_i = 1'b1;
+
+    @(posedge clk_i);
+    #1;
+    csr64_save_id_i    = 1'b0;
+    csr64_save_cause_i = 1'b0;
+  endtask
+
   task automatic check_sd_result(input string       test_name,
                                  input logic [31:0] exp_lower,
                                  input logic [31:0] exp_upper,
-                                 input logic [31:0] lower_addr,
+                                 input logic [63:0] exp_lower_addr,
+                                 input logic [63:0] exp_upper_addr,
+                                 input logic [63:0] lower_addr,
                                  input logic [31:0] lower_wdata,
                                  input logic [3:0]  lower_be,
-                                 input logic [31:0] upper_addr,
+                                 input logic [63:0] upper_addr,
                                  input logic [31:0] upper_wdata,
                                  input logic [3:0]  upper_be,
                                  input int unsigned exp_cycles,
@@ -955,18 +1497,20 @@ module testbench;
     logic pass;
     pass = 1'b1;
 
-    if (lower_addr !== 32'h0000_0000) begin
-      $error("%s FAIL: lower store addr = %08h, expected 00000000", test_name, lower_addr);
+    if (lower_addr !== exp_lower_addr) begin
+      $error("%s FAIL: lower store addr = %016h, expected %016h",
+             test_name, lower_addr, exp_lower_addr);
       pass = 1'b0;
     end else begin
-      $display("%s PASS: lower store addr = %08h", test_name, lower_addr);
+      $display("%s PASS: lower store addr = %016h", test_name, lower_addr);
     end
 
-    if (upper_addr !== 32'h0000_0004) begin
-      $error("%s FAIL: upper store addr = %08h, expected 00000004", test_name, upper_addr);
+    if (upper_addr !== exp_upper_addr) begin
+      $error("%s FAIL: upper store addr = %016h, expected %016h",
+             test_name, upper_addr, exp_upper_addr);
       pass = 1'b0;
     end else begin
-      $display("%s PASS: upper store addr = %08h", test_name, upper_addr);
+      $display("%s PASS: upper store addr = %016h", test_name, upper_addr);
     end
 
     if (lower_wdata !== exp_lower) begin
@@ -1014,12 +1558,15 @@ module testbench;
   // Main test stimulus
   // --------------------
   int unsigned cycles;
-  logic [31:0] sd_lower_addr;
+  logic [63:0] sd_lower_addr;
   logic [31:0] sd_lower_wdata;
   logic [3:0]  sd_lower_be;
-  logic [31:0] sd_upper_addr;
+  logic [63:0] sd_upper_addr;
   logic [31:0] sd_upper_wdata;
   logic [3:0]  sd_upper_be;
+  logic [63:0] captured_pc_target;
+  logic [63:0] captured_load_addr;
+  logic [63:0] captured_csr_wdata;
 
   initial begin
     // Wait for reset release
@@ -1901,6 +2448,120 @@ module testbench;
     $display("All %0d RV64 shift tests complete", 9);
     $display("==============================");
 
+    // ==========================================================
+    // PC-producing instruction tag tests
+    // ==========================================================
+    $display("\n========== PC-producing instruction tests ==========");
+
+    $display("\n---- PC-1: LUI positive tags zero-extended upper ----");
+    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
+    inject_instr(LUI_X3_POS, cycles);
+    check_result("P01", 5'd3, 32'h7ffff000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- PC-2: LUI negative tags sign-filled upper ----");
+    inject_instr(LUI_X3_NEG, cycles);
+    check_result("P02", 5'd3, 32'h80000000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- PC-3: AUIPC no carry stays inferred zero ----");
+    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
+    inject_instr(AUIPC_X3_1, cycles);
+    check_result("P03", 5'd3, 32'h00002000, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- PC-4: AUIPC carry writes explicit upper ----");
+    set_pc64(32'hffff_f000, 32'h0000_0000, 2'b10);
+    inject_instr(AUIPC_X3_1, cycles);
+    check_result("P04", 5'd3, 32'h00000000, 2'b01, 2, cycles, 32'h00000001, 1'b1);
+
+    $display("\n---- PC-5: AUIPC explicit PC upper takes upper cycle ----");
+    set_pc64(32'h0000_1000, 32'h1234_5678, 2'b01);
+    inject_instr(AUIPC_X3_2, cycles);
+    check_result("P05", 5'd3, 32'h00003000, 2'b01, 2, cycles, 32'h12345678, 1'b1);
+
+    $display("\n---- PC-6: AUIPC negative immediate tags sign-filled upper ----");
+    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
+    inject_instr(AUIPC_X3_NEG, cycles);
+    check_result("P06", 5'd3, 32'hfffff000, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- PC-7: JAL link no carry stays inferred zero ----");
+    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
+    inject_instr(JAL_X3_0, cycles);
+    check_result("P07", 5'd3, 32'h00001004, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    $display("\n---- PC-8: JAL link carry writes explicit upper ----");
+    set_pc64(32'hffff_fffc, 32'h0000_0000, 2'b10);
+    inject_instr(JAL_X3_0, cycles);
+    check_result("P08", 5'd3, 32'h00000000, 2'b01, 3, cycles, 32'h00000001, 1'b1);
+
+    $display("\n---- PC-9: JALR link explicit PC upper takes upper cycle ----");
+    set_pc64(32'h0000_0008, 32'h1234_5678, 2'b01);
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0040, 2'b10);
+    inject_instr(JALR_X3_X1_0, cycles);
+    check_result("P09", 5'd3, 32'h0000000c, 2'b01, 3, cycles, 32'h12345678, 1'b1);
+
+    $display("\n---- PC-10: JALR explicit base drives 64-bit target ----");
+    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
+    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0040, 2'b01);
+    inject_instr_capture_target(JALR_X3_X1_0, cycles, captured_pc_target);
+    check_addr64("P10 target", captured_pc_target, 64'h1234_5678_0000_0040);
+    check_result("P10", 5'd3, 32'h00001004, 2'b10, 3, cycles, 32'h0, 1'b0);
+
+    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
+
+    $display("\n==============================");
+    $display("All %0d PC-producing instruction tests complete", 10);
+    $display("==============================");
+
+    // ==========================================================
+    // CSR width tests
+    // ==========================================================
+    $display("\n========== CSR width tests ==========");
+
+    $display("\n---- CSRFILE-1: MISA reports RV64 MXL ----");
+    csr64_read_check("CSRFILE01 MISA", CSR_MISA, 64'h8000_0000_0010_1104);
+
+    $display("\n---- CSRFILE-2: MSCRATCH stores full 64-bit value ----");
+    csr64_write(CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
+    csr64_read_check("CSRFILE02 MSCRATCH", CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
+
+    $display("\n---- CSRFILE-3: MEPC write stores full 64-bit aligned value ----");
+    csr64_write(CSR_MEPC, 64'h0fed_cba9_8765_4321);
+    csr64_read_check("CSRFILE03 MEPC", CSR_MEPC, 64'h0fed_cba9_8765_4320);
+    check_value64("CSRFILE03 MEPC output", csr64_mepc_o, 64'h0fed_cba9_8765_4320);
+
+    $display("\n---- CSRFILE-4: exception save captures 64-bit PC and mtval ----");
+    csr64_save_id_exception(64'hfeed_cafe_0000_0042, 64'hdead_beef_1234_5678);
+    check_value64("CSRFILE04 MEPC output", csr64_mepc_o, 64'hfeed_cafe_0000_0042);
+    csr64_read_check("CSRFILE04 MTVAL", CSR_MTVAL, 64'hdead_beef_1234_5678);
+
+    $display("\n---- CSR-1: CSR read with zero upper tags 10 ----");
+    inject_csr(CSRRS_X3_MEPC_X0, 64'h0000_0000_1122_3344, cycles);
+    check_result("CSR01", 5'd3, 32'h1122_3344, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- CSR-2: CSR read with ones upper tags 11 ----");
+    inject_csr(CSRRS_X3_MEPC_X0, 64'hffff_ffff_89ab_cdef, cycles);
+    check_result("CSR02", 5'd3, 32'h89ab_cdef, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- CSR-3: CSR read with explicit upper takes upper cycle ----");
+    inject_csr(CSRRS_X3_MISA_X0, 64'h8000_0000_0010_1104, cycles);
+    check_result("CSR03", 5'd3, 32'h0010_1104, 2'b01, 2, cycles, 32'h8000_0000, 1'b1);
+
+    $display("\n---- CSR-4: CSRRW uses explicit 64-bit source operand ----");
+    write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
+    inject_csr_capture_wdata(CSRRW_X3_MEPC_X1, 64'h0000_0000_5566_7788,
+                             cycles, captured_csr_wdata);
+    check_value64("CSR04 wdata", captured_csr_wdata, 64'h1234_5678_9abc_def0);
+    check_result("CSR04", 5'd3, 32'h5566_7788, 2'b10, 2, cycles, 32'h0, 1'b0);
+
+    $display("\n---- CSR-5: CSRRWI zero-extends immediate to 64-bit write data ----");
+    inject_csr_capture_wdata(CSRRWI_X3_MEPC_5, 64'h0000_0000_aabb_ccdd,
+                             cycles, captured_csr_wdata);
+    check_value64("CSR05 wdata", captured_csr_wdata, 64'h0000_0000_0000_0005);
+    check_result("CSR05", 5'd3, 32'haabb_ccdd, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n==============================");
+    $display("All %0d CSR width tests complete", 9);
+    $display("==============================");
+
 
     // ==========================================================
     // LOAD tag tests
@@ -1985,6 +2646,7 @@ module testbench;
               sd_lower_addr, sd_lower_wdata, sd_lower_be,
               sd_upper_addr, sd_upper_wdata, sd_upper_be);
     check_sd_result("D04", 32'hcafe_babe, 32'h0000_0000,
+                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
                     sd_lower_addr, sd_lower_wdata, sd_lower_be,
                     sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
 
@@ -1995,6 +2657,7 @@ module testbench;
               sd_lower_addr, sd_lower_wdata, sd_lower_be,
               sd_upper_addr, sd_upper_wdata, sd_upper_be);
     check_sd_result("D05", 32'h1357_9bdf, 32'hffff_ffff,
+                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
                     sd_lower_addr, sd_lower_wdata, sd_lower_be,
                     sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
 
@@ -2005,11 +2668,36 @@ module testbench;
               sd_lower_addr, sd_lower_wdata, sd_lower_be,
               sd_upper_addr, sd_upper_wdata, sd_upper_be);
     check_sd_result("D06", 32'h0bad_f00d, 32'h1234_5678,
+                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
                     sd_lower_addr, sd_lower_wdata, sd_lower_be,
                     sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
 
+    // SD with an explicit-upper base takes one address cycle before issuing the lower store.
+    $display("\n---- SD-4: tag01 base drives 64-bit store addresses ----");
+    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0020, 2'b01);
+    write_rf_64(5'd2, 32'h89ab_cdef, 32'h7654_3210, 2'b01);
+    inject_sd_explicit_addr(SD_X2_0_X1, cycles,
+                            sd_lower_addr, sd_lower_wdata, sd_lower_be,
+                            sd_upper_addr, sd_upper_wdata, sd_upper_be);
+    check_sd_result("D07", 32'h7654_3210, 32'h89ab_cdef,
+                    64'h1234_5678_0000_0020, 64'h1234_5678_0000_0024,
+                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
+                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 4, cycles);
+
     $display("\n==============================");
-    $display("All %0d LD/SD tests complete", 6);
+    $display("All %0d LD/SD tests complete", 7);
+    $display("==============================");
+
+    $display("\n========== 64-bit address path tests ==========");
+
+    $display("\n---- ADDR-1: explicit base drives 64-bit load address ----");
+    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0000, 2'b01);
+    inject_load_explicit_addr(LW_X3_0_X1, 32'h1122_3344, cycles, captured_load_addr);
+    check_addr64("ADDR1", captured_load_addr, 64'h1234_5678_0000_0000);
+    check_result("ADDR1", 5'd3, 32'h11223344, 2'b10, 3, cycles, 32'h0, 1'b0);
+
+    $display("\n==============================");
+    $display("All %0d 64-bit address path tests complete", 1);
     $display("==============================");
 
 

@@ -14,10 +14,10 @@ package cve2_pkg;
   ////////////////
 
   typedef struct packed {
-    logic [31:0] current_pc;
-    logic [31:0] next_pc;
-    logic [31:0] last_data_addr;
-    logic [31:0] exception_addr;
+    logic [63:0] current_pc;
+    logic [63:0] next_pc;
+    logic [63:0] last_data_addr;
+    logic [63:0] exception_addr;
   } crash_dump_t;
 
   typedef struct packed {
@@ -558,7 +558,7 @@ package cve2_pkg;
   parameter int unsigned CSR_MSTATUS_TW_BIT       = 21;
 
   // CSR machine ISA
-  parameter logic [1:0] CSR_MISA_MXL = 2'd1; // M-XLEN: XLEN in M-Mode for RV32
+  parameter logic [1:0] CSR_MISA_MXL = 2'd2; // M-XLEN: XLEN in M-Mode for RV64
 
   // CSR interrupt pending/enable bits
   parameter int unsigned CSR_MSIX_BIT      = 3;

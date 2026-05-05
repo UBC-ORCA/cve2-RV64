@@ -25,14 +25,14 @@ module cve2_fetch_fifo #(
 
   // input port
   input  logic                in_valid_i,
-  input  logic [31:0]         in_addr_i,
+  input  logic [63:0]         in_addr_i,
   input  logic [31:0]         in_rdata_i,
   input  logic                in_err_i,
 
   // output port
   output logic                out_valid_o,
   input  logic                out_ready_i,
-  output logic [31:0]         out_addr_o,
+  output logic [63:0]         out_addr_o,
   output logic [31:0]         out_rdata_o,
   output logic                out_err_o,
   output logic                out_err_plus2_o
@@ -56,8 +56,8 @@ module cve2_fetch_fifo #(
   logic                     aligned_is_compressed, unaligned_is_compressed;
 
   logic                     addr_incr_two;
-  logic [31:1]              instr_addr_next;
-  logic [31:1]              instr_addr_d, instr_addr_q;
+  logic [63:1]              instr_addr_next;
+  logic [63:1]              instr_addr_d, instr_addr_q;
   logic                     instr_addr_en;
   logic                     unused_addr_in;
 
@@ -142,11 +142,11 @@ module cve2_fetch_fifo #(
   assign addr_incr_two = instr_addr_q[1] ? unaligned_is_compressed :
                                            aligned_is_compressed;
 
-  assign instr_addr_next = (instr_addr_q[31:1] +
+  assign instr_addr_next = (instr_addr_q[63:1] +
                             // Increment address by 4 or 2
-                            {29'd0,~addr_incr_two,addr_incr_two});
+                            {61'd0,~addr_incr_two,addr_incr_two});
 
-  assign instr_addr_d = clear_i ? in_addr_i[31:1] :
+  assign instr_addr_d = clear_i ? in_addr_i[63:1] :
                                   instr_addr_next;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin

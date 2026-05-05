@@ -3,6 +3,7 @@ cve2_alu.sv
 cve2_compressed_decoder.sv
 cve2_controller.sv
 cve2_counter.sv
+cve2_csr.sv
 cve2_cs_registers.sv
 cve2_decoder.sv
 cve2_ex_block.sv

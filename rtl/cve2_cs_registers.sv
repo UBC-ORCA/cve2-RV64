@@ -39,17 +39,23 @@ module cve2_cs_registers #(
   output logic                 csr_mstatus_tw_o,
 
   // mtvec
-  output logic [31:0]          csr_mtvec_o,
+  output logic [63:0]          csr_mtvec_o,
   input  logic                 csr_mtvec_init_i,
-  input  logic [31:0]          boot_addr_i,
+  input  logic [63:0]          boot_addr_i,
 
   // Interface to registers (SRAM like)
   input  logic                 csr_access_i,
   input  cve2_pkg::csr_num_e   csr_addr_i,
   input  logic [31:0]          csr_wdata_i,
+  input  logic [1:0]           csr_wdata_tag_i,
+  input  logic                 csr_wdata_upper_i,
+  input  logic                 csr_wdata_capture_i,
   input  cve2_pkg::csr_op_e    csr_op_i,
   input                        csr_op_en_i,
   output logic [31:0]          csr_rdata_o,
+  output logic [1:0]           csr_rdata_tag_o,
+  input  logic                 csr_rdata_upper_i,
+  input  logic                 csr_rdata_capture_i,
 
   // interrupts
   input  logic                 irq_software_i,
@@ -60,7 +66,7 @@ module cve2_cs_registers #(
   output logic                 irq_pending_o,          // interrupt request pending
   output cve2_pkg::irqs_t      irqs_o,                 // interrupt requests qualified with mie
   output logic                 csr_mstatus_mie_o,
-  output logic [31:0]          csr_mepc_o,
+  output logic [63:0]          csr_mepc_o,
 
   // PMP
   output cve2_pkg::pmp_cfg_t     csr_pmp_cfg_o  [PMPNumRegions],
@@ -71,14 +77,14 @@ module cve2_cs_registers #(
   input  logic                 debug_mode_i,
   input  cve2_pkg::dbg_cause_e debug_cause_i,
   input  logic                 debug_csr_save_i,
-  output logic [31:0]          csr_depc_o,
+  output logic [63:0]          csr_depc_o,
   output logic                 debug_single_step_o,
   output logic                 debug_ebreakm_o,
   output logic                 debug_ebreaku_o,
   output logic                 trigger_match_o,
 
-  input  logic [31:0]          pc_if_i,
-  input  logic [31:0]          pc_id_i,
+  input  logic [63:0]          pc_if_i,
+  input  logic [63:0]          pc_id_i,
 
   // Exception save/restore
   input  logic                 csr_save_if_i,
@@ -87,7 +93,7 @@ module cve2_cs_registers #(
   input  logic                 csr_restore_dret_i,
   input  logic                 csr_save_cause_i,
   input  cve2_pkg::exc_cause_e csr_mcause_i,
-  input  logic [31:0]          csr_mtval_i,
+  input  logic [63:0]          csr_mtval_i,
   output logic                 illegal_csr_insn_o,     // access to non-existent CSR,
                                                         // with wrong priviledge level, or
                                                         // missing write permissions
@@ -111,21 +117,38 @@ import cve2_pkg::*;
   localparam int unsigned RV32MEnabled = (RV32M == RV32MNone) ? 0 : 1;
   localparam int unsigned PMPAddrWidth = (PMPGranularity > 0) ? 33 - PMPGranularity : 32;
 
+  function automatic logic [31:0] inferred_upper_from_tag(input logic [1:0] tag);
+    unique case (tag)
+      2'b11:   inferred_upper_from_tag = 32'hffff_ffff;
+      default: inferred_upper_from_tag = 32'h0000_0000;
+    endcase
+  endfunction
+
+  function automatic logic [1:0] tag_from_upper(input logic [31:0] upper);
+    if (upper == 32'h0000_0000) begin
+      tag_from_upper = 2'b10;
+    end else if (upper == 32'hffff_ffff) begin
+      tag_from_upper = 2'b11;
+    end else begin
+      tag_from_upper = 2'b01;
+    end
+  endfunction
+
   // misa
-  localparam logic [31:0] MISA_VALUE =
-      (0                 <<  0)  // A - Atomic Instructions extension
-    | (RV32BEnabled      <<  1)  // B - Bit-Manipulation extension
-    | (1                 <<  2)  // C - Compressed extension
-    | (0                 <<  3)  // D - Double precision floating-point extension
-    | (32'(RV32E)        <<  4)  // E - RV32E base ISA
-    | (0                 <<  5)  // F - Single precision floating-point extension
-    | (32'(!RV32E)       <<  8)  // I - RV32I/64I/128I base ISA
-    | (RV32MEnabled      << 12)  // M - Integer Multiply/Divide extension
-    | (0                 << 13)  // N - User level interrupts supported
-    | (0                 << 18)  // S - Supervisor mode implemented
-    | (1                 << 20)  // U - User mode implemented
-    | (0                 << 23)  // X - Non-standard extensions present
-    | (32'(CSR_MISA_MXL) << 30); // M-XLEN
+  localparam logic [63:0] MISA_VALUE =
+      (64'(0)                 <<  0)  // A - Atomic Instructions extension
+    | (64'(RV32BEnabled)      <<  1)  // B - Bit-Manipulation extension
+    | (64'(1)                 <<  2)  // C - Compressed extension
+    | (64'(0)                 <<  3)  // D - Double precision floating-point extension
+    | (64'(RV32E)             <<  4)  // E - RV32E base ISA
+    | (64'(0)                 <<  5)  // F - Single precision floating-point extension
+    | (64'(!RV32E)            <<  8)  // I - RV32I/64I/128I base ISA
+    | (64'(RV32MEnabled)      << 12)  // M - Integer Multiply/Divide extension
+    | (64'(0)                 << 13)  // N - User level interrupts supported
+    | (64'(0)                 << 18)  // S - Supervisor mode implemented
+    | (64'(1)                 << 20)  // U - User mode implemented
+    | (64'(0)                 << 23)  // X - Non-standard extensions present
+    | (64'(CSR_MISA_MXL)      << 62); // M-XLEN
 
   typedef struct packed {
     logic      mie;
@@ -159,7 +182,7 @@ import cve2_pkg::*;
   } dcsr_t;
 
   // Interrupt and exception control signals
-  logic [31:0] exception_pc;
+  logic [63:0] exception_pc;
 
   // CSRs
   priv_lvl_e   priv_lvl_q, priv_lvl_d;
@@ -167,30 +190,30 @@ import cve2_pkg::*;
   logic        mstatus_en;
   irqs_t       mie_q, mie_d;
   logic        mie_en;
-  logic [31:0] mscratch_q;
+  logic [63:0] mscratch_q;
   logic        mscratch_en;
-  logic [31:0] mepc_q, mepc_d;
+  logic [63:0] mepc_q, mepc_d;
   logic        mepc_en;
   logic  [6:0] mcause_q, mcause_d;
   logic        mcause_en;
-  logic [31:0] mtval_q, mtval_d;
+  logic [63:0] mtval_q, mtval_d;
   logic        mtval_en;
-  logic [31:0] mtvec_q, mtvec_d;
+  logic [63:0] mtvec_q, mtvec_d;
   logic        mtvec_en;
   irqs_t       mip;
   dcsr_t       dcsr_q, dcsr_d;
   logic        dcsr_en;
-  logic [31:0] depc_q, depc_d;
+  logic [63:0] depc_q, depc_d;
   logic        depc_en;
-  logic [31:0] dscratch0_q;
-  logic [31:0] dscratch1_q;
+  logic [63:0] dscratch0_q;
+  logic [63:0] dscratch1_q;
   logic        dscratch0_en, dscratch1_en;
 
   // CSRs for recoverable NMIs
   // NOTE: these CSRS are nonstandard, see https://github.com/riscv/riscv-isa-manual/issues/261
   status_stk_t mstack_q, mstack_d;
   logic        mstack_en;
-  logic [31:0] mstack_epc_q, mstack_epc_d;
+  logic [63:0] mstack_epc_q, mstack_epc_d;
   logic  [6:0] mstack_cause_q, mstack_cause_d;
 
   // PMP Signals
@@ -225,8 +248,11 @@ import cve2_pkg::*;
   logic [31:0] tmatch_value_rdata;
 
   // CSR update logic
-  logic [31:0] csr_wdata_int;
-  logic [31:0] csr_rdata_int;
+  logic [63:0] csr_wdata_int;
+  logic [63:0] csr_wdata_full;
+  logic [63:0] csr_rdata_int;
+  logic [31:0] csr_wdata_lower_q;
+  logic [31:0] csr_rdata_upper_q;
   logic        csr_we_int;
   logic        csr_wr;
 
@@ -320,7 +346,7 @@ import cve2_pkg::*;
       CSR_MEPC: csr_rdata_int = mepc_q;
 
       // mcause: exception cause
-      CSR_MCAUSE: csr_rdata_int = {mcause_q[6], 25'b0, mcause_q[5:0]};
+      CSR_MCAUSE: csr_rdata_int = {mcause_q[6], 57'b0, mcause_q[5:0]};
 
       // mtval: trap value
       CSR_MTVAL: csr_rdata_int = mtval_q;
@@ -419,7 +445,7 @@ import cve2_pkg::*;
       CSR_MHPMCOUNTER20, CSR_MHPMCOUNTER21, CSR_MHPMCOUNTER22, CSR_MHPMCOUNTER23,
       CSR_MHPMCOUNTER24, CSR_MHPMCOUNTER25, CSR_MHPMCOUNTER26, CSR_MHPMCOUNTER27,
       CSR_MHPMCOUNTER28, CSR_MHPMCOUNTER29, CSR_MHPMCOUNTER30, CSR_MHPMCOUNTER31: begin
-        csr_rdata_int = mhpmcounter[mhpmcounter_idx][31:0];
+        csr_rdata_int = mhpmcounter[mhpmcounter_idx];
       end
 
       CSR_MCYCLEH,
@@ -482,6 +508,26 @@ import cve2_pkg::*;
     end
   end
 
+  always_ff @(posedge clk_i or negedge rst_ni) begin : csr_half_capture_reg
+    if (!rst_ni) begin
+      csr_wdata_lower_q <= 32'h0000_0000;
+      csr_rdata_upper_q <= 32'h0000_0000;
+    end else begin
+      if (csr_wdata_capture_i) begin
+        csr_wdata_lower_q <= csr_wdata_i;
+      end
+      if (csr_rdata_capture_i) begin
+        csr_rdata_upper_q <= csr_rdata_int[63:32];
+      end
+    end
+  end
+
+  assign csr_wdata_full = csr_wdata_upper_i ?
+                          {csr_wdata_i, csr_wdata_lower_q} :
+                          {inferred_upper_from_tag(csr_wdata_tag_i), csr_wdata_i};
+  assign csr_rdata_tag_o = tag_from_upper(csr_rdata_int[63:32]);
+  assign csr_rdata_o     = csr_rdata_upper_i ? csr_rdata_upper_q : csr_rdata_int[31:0];
+
   // write logic
   always_comb begin
     exception_pc = pc_id_i;
@@ -492,19 +538,19 @@ import cve2_pkg::*;
     mie_en       = 1'b0;
     mscratch_en  = 1'b0;
     mepc_en      = 1'b0;
-    mepc_d       = {csr_wdata_int[31:1], 1'b0};
+    mepc_d       = {csr_wdata_int[63:1], 1'b0};
     mcause_en    = 1'b0;
-    mcause_d     = {csr_wdata_int[31], csr_wdata_int[5:0]};
+    mcause_d     = {csr_wdata_int[63], csr_wdata_int[5:0]};
     mtval_en     = 1'b0;
     mtval_d      = csr_wdata_int;
     mtvec_en     = csr_mtvec_init_i;
     // mtvec.MODE set to vectored
     // mtvec.BASE must be 256-byte aligned
-    mtvec_d      = csr_mtvec_init_i ? {boot_addr_i[31:8], 6'b0, 2'b01} :
-                                      {csr_wdata_int[31:8], 6'b0, 2'b01};
+    mtvec_d      = csr_mtvec_init_i ? {boot_addr_i[63:8], 6'b0, 2'b01} :
+                                      {csr_wdata_int[63:8], 6'b0, 2'b01};
     dcsr_en      = 1'b0;
     dcsr_d       = dcsr_q;
-    depc_d       = {csr_wdata_int[31:1], 1'b0};
+    depc_d       = {csr_wdata_int[63:1], 1'b0};
     depc_en      = 1'b0;
     dscratch0_en = 1'b0;
     dscratch1_en = 1'b0;
@@ -718,11 +764,11 @@ import cve2_pkg::*;
   // CSR operation logic
   always_comb begin
     unique case (csr_op_i)
-      CSR_OP_WRITE: csr_wdata_int =  csr_wdata_i;
-      CSR_OP_SET:   csr_wdata_int =  csr_wdata_i | csr_rdata_o;
-      CSR_OP_CLEAR: csr_wdata_int = ~csr_wdata_i & csr_rdata_o;
-      CSR_OP_READ:  csr_wdata_int = csr_wdata_i;
-      default:      csr_wdata_int = csr_wdata_i;
+      CSR_OP_WRITE: csr_wdata_int =  csr_wdata_full;
+      CSR_OP_SET:   csr_wdata_int =  csr_wdata_full | csr_rdata_int;
+      CSR_OP_CLEAR: csr_wdata_int = ~csr_wdata_full & csr_rdata_int;
+      CSR_OP_READ:  csr_wdata_int = csr_wdata_full;
+      default:      csr_wdata_int = csr_wdata_full;
     endcase
   end
 
@@ -730,8 +776,6 @@ import cve2_pkg::*;
 
   // only write CSRs during one clock cycle
   assign csr_we_int  = csr_wr & csr_op_en_i & ~illegal_csr_insn_o;
-
-  assign csr_rdata_o = csr_rdata_int;
 
   // directly output some registers
   assign csr_mepc_o  = mepc_q;
@@ -773,7 +817,7 @@ import cve2_pkg::*;
 
   // MEPC
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_mepc_csr (
@@ -805,7 +849,7 @@ import cve2_pkg::*;
 
   // MSCRATCH
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_mscratch_csr (
@@ -833,7 +877,7 @@ import cve2_pkg::*;
 
   // MTVAL
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_mtval_csr (
@@ -847,8 +891,8 @@ import cve2_pkg::*;
 
   // MTVEC
   cve2_csr #(
-    .Width     (32),
-    .ResetValue(32'd1)
+    .Width     (64),
+    .ResetValue(64'd1)
   ) u_mtvec_csr (
     .clk_i     (clk_i),
     .rst_ni    (rst_ni),
@@ -880,7 +924,7 @@ import cve2_pkg::*;
 
   // DEPC
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_depc_csr (
@@ -894,7 +938,7 @@ import cve2_pkg::*;
 
   // DSCRATCH0
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_dscratch0_csr (
@@ -908,7 +952,7 @@ import cve2_pkg::*;
 
   // DSCRATCH1
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_dscratch1_csr (
@@ -937,7 +981,7 @@ import cve2_pkg::*;
 
   // MSTACK_EPC
   cve2_csr #(
-    .Width     (32),
+    .Width     (64),
     .ShadowCopy(1'b0),
     .ResetValue('0)
   ) u_mstack_epc_csr (
