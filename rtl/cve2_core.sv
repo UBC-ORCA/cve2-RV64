@@ -191,7 +191,6 @@ module cve2_core import cve2_pkg::*; #(
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
   logic [31:0] rf_wdata_lsu;
-  logic [1:0] rf_wdata_lsu_tag;
   logic        rf_wdata_lsu_upper;
   logic        rf_we_wb;
   logic        rf_we_lsu;
@@ -199,13 +198,6 @@ module cve2_core import cve2_pkg::*; #(
   logic [4:0]  rf_waddr_id;
   logic [31:0] rf_wdata_id;
   logic        rf_we_id;
-
-  logic [1:0]           r_a_tag;
-  logic [1:0]           r_b_tag;
-  logic [1:0]           w_tag;
-
-  logic [1:0]           w_tag_id;
-  logic [1:0]           pc_id_tag;
 
   // ALU Control
   alu_op_e     alu_operator_ex;
@@ -234,11 +226,9 @@ module cve2_core import cve2_pkg::*; #(
   logic        csr_op_en;
   csr_num_e    csr_addr;
   logic [31:0] csr_rdata;
-  logic [1:0]  csr_rdata_tag;
   logic        csr_rdata_upper;
   logic        csr_rdata_capture;
   logic [31:0] csr_wdata;
-  logic [1:0]  csr_wdata_tag;
   logic        csr_wdata_upper;
   logic        csr_wdata_capture;
   logic        illegal_csr_insn_id;    // CSR access to non-existent register,
@@ -326,16 +316,6 @@ module cve2_core import cve2_pkg::*; #(
   // Before going to sleep, wait for I- and D-side
   // interfaces to finish ongoing operations.
   assign core_busy_o = ctrl_busy | if_busy | lsu_busy;
-
-  always_comb begin
-    if (pc_id[63:32] == 32'h0000_0000) begin
-      pc_id_tag = 2'b10;
-    end else if (pc_id[63:32] == 32'hffff_ffff) begin
-      pc_id_tag = 2'b11;
-    end else begin
-      pc_id_tag = 2'b01;
-    end
-  end
 
   //////////////
   // IF stage //
@@ -449,7 +429,6 @@ module cve2_core import cve2_pkg::*; #(
 
     .pc_id_i      (pc_id[31:0]),
     .pc_id_upper_i(pc_id[63:32]),
-    .pc_id_tag_i  (pc_id_tag),
 
     // Stalls
     .ex_valid_i      (ex_valid),
@@ -483,7 +462,6 @@ module cve2_core import cve2_pkg::*; #(
     .csr_save_cause_o     (csr_save_cause),
     .csr_mtval_o          (csr_mtval),
     .csr_wdata_o          (csr_wdata),
-    .csr_wdata_tag_o      (csr_wdata_tag),
     .csr_wdata_upper_o    (csr_wdata_upper),
     .csr_wdata_capture_o  (csr_wdata_capture),
     .csr_rdata_upper_o    (csr_rdata_upper),
@@ -519,10 +497,7 @@ module cve2_core import cve2_pkg::*; #(
     .x_register_o(x_register_o),
     .r_a_upper_o(rf_r_upper_a),
     .r_b_upper_o(rf_r_upper_b),
-    .r_a_tag_i(r_a_tag),
-    .r_b_tag_i(r_b_tag),
     .rf_w_upper_id_o(rf_w_upper_id),
-    .w_tag_id_o(w_tag_id),
     .lsu_addr_ex_o(lsu_addr_ex),
     .pc_target_ex_o(pc_target_ex),
 
@@ -555,7 +530,6 @@ module cve2_core import cve2_pkg::*; #(
     // write data to commit in the register file
     .result_ex_i(result_ex),
     .csr_rdata_i    (csr_rdata),
-    .csr_rdata_tag_i(csr_rdata_tag),
 
     .rf_raddr_a_o      (rf_raddr_a),
     .rf_rdata_a_i      (rf_rdata_a),
@@ -657,7 +631,6 @@ module cve2_core import cve2_pkg::*; #(
 
     .lsu_rdata_o      (rf_wdata_lsu),
     .lsu_rdata_valid_o(rf_we_lsu),
-    .lsu_rdata_tag_o  (rf_wdata_lsu_tag),
     .lsu_rdata_upper_o(rf_wdata_lsu_upper),
     .lsu_req_i        (lsu_req),
 
@@ -703,16 +676,11 @@ module cve2_core import cve2_pkg::*; #(
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o   (rf_we_wb),
 
-    .rf_wdata_lsu_tag_i(rf_wdata_lsu_tag),
-
     .lsu_resp_valid_i(lsu_resp_valid),
     .lsu_resp_err_i  (lsu_resp_err),
 
-    .w_tag_o(w_tag),
     .w_upper_i(rf_w_upper_id),
-    .w_upper_o(rf_w_upper_wb),
-
-    .w_tag_id_i(w_tag_id)
+    .w_upper_o(rf_w_upper_wb)
   );
 
   ///////////////////////
@@ -771,12 +739,9 @@ module cve2_core import cve2_pkg::*; #(
     .raddr_a_i(rf_raddr_a),
     .rdata_a_o(rf_rdata_a),
     .r_a_upper_i(rf_r_upper_a),
-    .r_a_tag_o(r_a_tag),
     .raddr_b_i(rf_raddr_b),
     .rdata_b_o(rf_rdata_b),
     .r_b_upper_i(rf_r_upper_b),
-    .r_b_tag_o(r_b_tag),
-    .w_tag_i(w_tag),
     .waddr_a_i(rf_waddr_wb),
     .wdata_a_i(rf_wdata_wb),
     .we_a_i   (rf_we_wb),
@@ -819,13 +784,11 @@ module cve2_core import cve2_pkg::*; #(
     .csr_access_i(csr_access),
     .csr_addr_i  (csr_addr),
     .csr_wdata_i        (csr_wdata),
-    .csr_wdata_tag_i    (csr_wdata_tag),
     .csr_wdata_upper_i  (csr_wdata_upper),
     .csr_wdata_capture_i(csr_wdata_capture),
     .csr_op_i    (csr_op),
     .csr_op_en_i (csr_op_en),
     .csr_rdata_o        (csr_rdata),
-    .csr_rdata_tag_o    (csr_rdata_tag),
     .csr_rdata_upper_i  (csr_rdata_upper),
     .csr_rdata_capture_i(csr_rdata_capture),
 

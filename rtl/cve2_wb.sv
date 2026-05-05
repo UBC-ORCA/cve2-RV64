@@ -31,7 +31,6 @@ module cve2_wb #(
 
   input  logic [31:0]              rf_wdata_lsu_i,
   input  logic                     rf_we_lsu_i,
-  input  logic [1:0]               rf_wdata_lsu_tag_i,
   input  logic                     rf_wdata_lsu_upper_i,
 
   output logic [4:0]               rf_waddr_wb_o,
@@ -41,8 +40,6 @@ module cve2_wb #(
   input logic                      lsu_resp_valid_i,
   input logic                      lsu_resp_err_i,
 
-  output logic [1:0]               w_tag_o,
-  input  logic [1:0]               w_tag_id_i,
   input  logic                     w_upper_i,
   output logic                     w_upper_o
 );
@@ -74,25 +71,6 @@ module cve2_wb #(
   assign rf_we_wb_o    = |rf_wdata_wb_mux_we;
 
   assign w_upper_o = rf_we_lsu_i ? rf_wdata_lsu_upper_i : w_upper_i;
-
-  // Tag computation:
-  //   Upper-half write (2nd cycle): derive tag from actual upper result data
-  //   Lower-half write (1st or only cycle): use tag computed by ID stage
-  always_comb begin
-    if (rf_we_lsu_i) begin
-      w_tag_o = rf_wdata_lsu_tag_i;
-    end else if (w_upper_i) begin
-      if (rf_wdata_id_i == 32'h0000_0000)
-        w_tag_o = 2'b10;
-      else if (rf_wdata_id_i == 32'hFFFF_FFFF)
-        w_tag_o = 2'b11;
-      else
-        w_tag_o = 2'b01;
-    end else begin
-      w_tag_o = w_tag_id_i;
-    end
-  end
-
 
   `ASSERT(RFWriteFromOneSourceOnly, $onehot0(rf_wdata_wb_mux_we))
 endmodule

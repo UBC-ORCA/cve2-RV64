@@ -54,11 +54,9 @@ module testbench;
   // --------------------
   logic [31:0] pc_id_i;
   logic [31:0] pc_id_upper_i;
-  logic [1:0]  pc_id_tag_i;
   initial begin
     pc_id_i       = 32'h0000_0000;
     pc_id_upper_i = 32'h0000_0000;
-    pc_id_tag_i   = 2'b10;
   end
 
   // --------------------
@@ -138,7 +136,6 @@ module testbench;
   logic          csr_save_cause_o;
   logic [63:0]   csr_mtval_o;
   logic [31:0]   csr_wdata_o;
-  logic [1:0]    csr_wdata_tag_o;
   logic          csr_wdata_upper_o;
   logic          csr_wdata_capture_o;
   logic          csr_rdata_upper_o;
@@ -147,7 +144,6 @@ module testbench;
   logic          csr_mstatus_tw_i;
   logic [63:0]   csr_rdata_full_i;
   logic [31:0]   csr_rdata_i;
-  logic [1:0]    csr_rdata_tag_i;
 
   initial begin
     priv_mode_i       = PRIV_LVL_M;
@@ -162,31 +158,18 @@ module testbench;
     endcase
   endfunction
 
-  function automatic logic [1:0] tb_tag_from_upper(input logic [31:0] upper);
-    if (upper == 32'h0000_0000) begin
-      tb_tag_from_upper = 2'b10;
-    end else if (upper == 32'hffff_ffff) begin
-      tb_tag_from_upper = 2'b11;
-    end else begin
-      tb_tag_from_upper = 2'b01;
-    end
-  endfunction
-
   assign csr_rdata_i     = csr_rdata_upper_o ? csr_rdata_full_i[63:32] :
                                                 csr_rdata_full_i[31:0];
-  assign csr_rdata_tag_i = tb_tag_from_upper(csr_rdata_full_i[63:32]);
 
   // Standalone CSR-file harness for mechanism 7 storage/path checks.
   logic        csr64_access_i;
   csr_num_e    csr64_addr_i;
   logic [31:0] csr64_wdata_i;
-  logic [1:0]  csr64_wdata_tag_i;
   logic        csr64_wdata_upper_i;
   logic        csr64_wdata_capture_i;
   csr_op_e     csr64_op_i;
   logic        csr64_op_en_i;
   logic [31:0] csr64_rdata_o;
-  logic [1:0]  csr64_rdata_tag_o;
   logic        csr64_rdata_upper_i;
   logic        csr64_rdata_capture_i;
   logic [63:0] csr64_mepc_o;
@@ -221,7 +204,6 @@ module testbench;
     csr64_access_i       = 1'b0;
     csr64_addr_i         = CSR_MSCRATCH;
     csr64_wdata_i        = 32'h0;
-    csr64_wdata_tag_i    = 2'b10;
     csr64_wdata_upper_i  = 1'b0;
     csr64_wdata_capture_i = 1'b0;
     csr64_op_i           = CSR_OP_READ;
@@ -284,7 +266,6 @@ module testbench;
 
   x_register_t x_register_o;
   logic        r_a_upper_o, r_b_upper_o;
-  logic [1:0]  r_a_tag_i, r_b_tag_i;
   logic [63:0] lsu_addr_ex_o;
   logic [63:0] pc_target_ex_o;
 
@@ -301,7 +282,6 @@ module testbench;
     x_issue_resp_i   = '0;
     x_result_valid_i = 1'b0;
     x_result_i       = '0;
-    // r_a_tag_i and r_b_tag_i are driven by the RF port — do NOT drive here
   end
 
   // --------------------
@@ -361,13 +341,10 @@ module testbench;
   logic [4:0]  rf_waddr_wb_o;
   logic [31:0] rf_wdata_wb_o;
   logic        rf_we_wb_o;
-  logic [1:0]  w_tag_o;
-  logic [1:0]  w_tag_id;
   logic        rf_w_upper_wb_o;
 
   // LSU writeback path
   logic [31:0] rf_wdata_lsu_i;
-  logic [1:0]  rf_wdata_lsu_tag_i;
   logic        rf_wdata_lsu_upper_i;
   logic        rf_we_lsu_i;
 
@@ -411,7 +388,6 @@ module testbench;
 
     .pc_id_i,
     .pc_id_upper_i,
-    .pc_id_tag_i,
 
     .ex_valid_i,
     .lsu_resp_valid_i,
@@ -446,7 +422,6 @@ module testbench;
     .csr_save_cause_o,
     .csr_mtval_o,
     .csr_wdata_o,
-    .csr_wdata_tag_o,
     .csr_wdata_upper_o,
     .csr_wdata_capture_o,
     .csr_rdata_upper_o,
@@ -473,8 +448,6 @@ module testbench;
     .x_register_o,
     .r_a_upper_o,
     .r_b_upper_o,
-    .r_a_tag_i,
-    .r_b_tag_i,
 
     .x_commit_valid_o,
     .x_commit_o,
@@ -503,7 +476,6 @@ module testbench;
 
     .result_ex_i(result_ex_i),
     .csr_rdata_i,
-    .csr_rdata_tag_i,
 
     .rf_raddr_a_o,
     .rf_rdata_a_i,
@@ -516,7 +488,6 @@ module testbench;
     .rf_wdata_id_o,
     .rf_we_id_o,
     .rf_w_upper_id_o,
-    .w_tag_id_o(w_tag_id),
     .lsu_addr_ex_o,
     .pc_target_ex_o,
 
@@ -557,13 +528,11 @@ module testbench;
     .csr_access_i(csr64_access_i),
     .csr_addr_i  (csr64_addr_i),
     .csr_wdata_i        (csr64_wdata_i),
-    .csr_wdata_tag_i    (csr64_wdata_tag_i),
     .csr_wdata_upper_i  (csr64_wdata_upper_i),
     .csr_wdata_capture_i(csr64_wdata_capture_i),
     .csr_op_i    (csr64_op_i),
     .csr_op_en_i (csr64_op_en_i),
     .csr_rdata_o        (csr64_rdata_o),
-    .csr_rdata_tag_o    (csr64_rdata_tag_o),
     .csr_rdata_upper_i  (csr64_rdata_upper_i),
     .csr_rdata_capture_i(csr64_rdata_capture_i),
 
@@ -683,7 +652,6 @@ module testbench;
     .lsu_sign_ext_i(lsu_sign_ext_o),
 
     .lsu_rdata_o      (rf_wdata_lsu_i),
-    .lsu_rdata_tag_o  (rf_wdata_lsu_tag_i),
     .lsu_rdata_upper_o(rf_wdata_lsu_upper_i),
     .lsu_rdata_valid_o(rf_we_lsu_i),
     .lsu_req_i        (lsu_req_o),
@@ -723,7 +691,6 @@ module testbench;
 
     .rf_wdata_lsu_i(rf_wdata_lsu_i),
     .rf_we_lsu_i   (rf_we_lsu_i),
-    .rf_wdata_lsu_tag_i(rf_wdata_lsu_tag_i),
     .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper_i),
 
     .rf_waddr_wb_o(rf_waddr_wb_o),
@@ -733,8 +700,6 @@ module testbench;
     .lsu_resp_valid_i(lsu_resp_valid_i),
     .lsu_resp_err_i  (1'b0),
 
-    .w_tag_o   (w_tag_o),
-    .w_tag_id_i(w_tag_id),
     .w_upper_i (rf_w_upper_id_o),
     .w_upper_o (rf_w_upper_wb_o)
   );
@@ -747,7 +712,6 @@ module testbench;
   logic [31:0] preload_wdata;
   logic        preload_we;
   logic        preload_w_upper;
-  logic [1:0]  preload_w_tag;
 
   initial begin
     preload_mode    = 1'b0;
@@ -755,20 +719,17 @@ module testbench;
     preload_wdata   = 32'h0;
     preload_we      = 1'b0;
     preload_w_upper = 1'b0;
-    preload_w_tag   = 2'b01;
   end
 
   logic [4:0]  rf_waddr_mux;
   logic [31:0] rf_wdata_mux;
   logic        rf_we_mux;
   logic        rf_w_upper_mux;
-  logic [1:0]  rf_w_tag_mux;
 
   assign rf_waddr_mux   = preload_mode ? preload_waddr   : rf_waddr_wb_o;
   assign rf_wdata_mux   = preload_mode ? preload_wdata   : rf_wdata_wb_o;
   assign rf_we_mux      = preload_mode ? preload_we      : rf_we_wb_o;
   assign rf_w_upper_mux = preload_mode ? preload_w_upper  : rf_w_upper_wb_o;
-  assign rf_w_tag_mux   = preload_mode ? preload_w_tag    : w_tag_o;
 
   // --------------------
   // Readback mux: allows testbench to read RF directly
@@ -804,17 +765,14 @@ module testbench;
     .raddr_a_i(rf_raddr_a_mux),
     .rdata_a_o(rf_rdata_a_i),
     .r_a_upper_i(rf_r_upper_a_mux),
-    .r_a_tag_o(r_a_tag_i),
 
     .raddr_b_i(rf_raddr_b_o),
     .rdata_b_o(rf_rdata_b_i),
     .r_b_upper_i(r_b_upper_o),
-    .r_b_tag_o(r_b_tag_i),
 
     .waddr_a_i(rf_waddr_mux),
     .wdata_a_i(rf_wdata_mux),
     .we_a_i   (rf_we_mux),
-    .w_tag_i  (rf_w_tag_mux),
 
     .w_upper_i(rf_w_upper_mux)
   );
@@ -826,6 +784,8 @@ module testbench;
                                input logic [31:0] data,
                                input logic        upper,
                                input logic [1:0]  tag);
+    logic [1:0] unused_tag;
+    unused_tag = tag;
     @(posedge clk_i);
     #1;
     preload_mode    = 1'b1;
@@ -833,7 +793,6 @@ module testbench;
     preload_wdata   = data;
     preload_we      = 1'b1;
     preload_w_upper = upper;
-    preload_w_tag   = tag;
     @(posedge clk_i);  // write happens on this edge
     #1;
     preload_we      = 1'b0;
@@ -862,9 +821,10 @@ module testbench;
   task automatic set_pc64(input logic [31:0] lower_val,
                           input logic [31:0] upper_val,
                           input logic [1:0]  tag);
+    logic [1:0] unused_tag;
+    unused_tag = tag;
     pc_id_i       = lower_val;
     pc_id_upper_i = upper_val;
-    pc_id_tag_i   = tag;
     #1;
   endtask
 
@@ -999,7 +959,7 @@ module testbench;
     if (csr_op_en_o) begin
       captured_wdata = csr_wdata_upper_o ?
                        {csr_wdata_o, captured_lower} :
-                       {tb_inferred_upper(csr_wdata_tag_o), csr_wdata_o};
+                       {32'h0000_0000, csr_wdata_o};
       captured       = 1'b1;
     end
 
@@ -1017,7 +977,7 @@ module testbench;
         end
         captured_wdata = csr_wdata_upper_o ?
                          {csr_wdata_o, captured_lower} :
-                         {tb_inferred_upper(csr_wdata_tag_o), csr_wdata_o};
+                         {32'h0000_0000, csr_wdata_o};
         captured       = 1'b1;
       end
     end
@@ -1080,6 +1040,13 @@ module testbench;
   task automatic inject_load(input  logic [31:0]  encoding,
                              input  logic [31:0]  mem_word,
                              output int unsigned  cycles_taken);
+    logic        resp_pending;
+    logic [31:0] resp_data;
+
+    resp_pending = 1'b0;
+    resp_data    = 32'h0000_0000;
+    cycles_taken = 0;
+
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
@@ -1088,17 +1055,25 @@ module testbench;
     data_rvalid_i     = 1'b0;
     data_rdata_i      = 32'h0000_0000;
 
-    // First cycle issues the load request. The testbench grants immediately.
-    @(posedge clk_i);
-    #1;
-    data_rdata_i  = mem_word;
-    data_rvalid_i = 1'b1;
+    do begin
+      @(posedge clk_i);
+      #1;
+      cycles_taken++;
 
-    // Second cycle returns the memory response and lets WB write the RF.
-    @(posedge clk_i);
-    #1;
-    cycles_taken  = 2;
-    data_rvalid_i = 1'b0;
+      if (resp_pending) begin
+        data_rdata_i  = resp_data;
+        data_rvalid_i = 1'b1;
+        resp_pending  = 1'b0;
+      end else begin
+        data_rdata_i  = 32'h0000_0000;
+        data_rvalid_i = 1'b0;
+      end
+
+      if (data_req_o && !data_we_o) begin
+        resp_data    = mem_word;
+        resp_pending = 1'b1;
+      end
+    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
 
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
@@ -1112,6 +1087,16 @@ module testbench;
                                            input  logic [31:0] mem_word,
                                            output int unsigned cycles_taken,
                                            output logic [63:0] load_addr);
+    logic        resp_pending;
+    logic [31:0] resp_data;
+    logic        addr_seen;
+
+    resp_pending = 1'b0;
+    resp_data    = 32'h0000_0000;
+    addr_seen    = 1'b0;
+    load_addr    = 64'h0000_0000_0000_0000;
+    cycles_taken = 0;
+
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
@@ -1120,19 +1105,29 @@ module testbench;
     data_rvalid_i     = 1'b0;
     data_rdata_i      = 32'h0000_0000;
 
-    @(posedge clk_i);
-    #1;
-    load_addr = data_addr_o;
+    do begin
+      @(posedge clk_i);
+      #1;
+      cycles_taken++;
 
-    @(posedge clk_i);
-    #1;
-    data_rdata_i  = mem_word;
-    data_rvalid_i = 1'b1;
+      if (resp_pending) begin
+        data_rdata_i  = resp_data;
+        data_rvalid_i = 1'b1;
+        resp_pending  = 1'b0;
+      end else begin
+        data_rdata_i  = 32'h0000_0000;
+        data_rvalid_i = 1'b0;
+      end
 
-    @(posedge clk_i);
-    #1;
-    cycles_taken  = 3;
-    data_rvalid_i = 1'b0;
+      if (data_req_o && !data_we_o) begin
+        if (!addr_seen) begin
+          load_addr = data_addr_o;
+          addr_seen = 1'b1;
+        end
+        resp_data    = mem_word;
+        resp_pending = 1'b1;
+      end
+    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
 
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
@@ -1146,6 +1141,15 @@ module testbench;
                            input  logic [31:0]  lower_word,
                            input  logic [31:0]  upper_word,
                            output int unsigned  cycles_taken);
+    logic        resp_pending;
+    logic [31:0] resp_data;
+    int unsigned req_count;
+
+    resp_pending = 1'b0;
+    resp_data    = 32'h0000_0000;
+    req_count    = 0;
+    cycles_taken = 0;
+
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
@@ -1154,23 +1158,26 @@ module testbench;
     data_rvalid_i     = 1'b0;
     data_rdata_i      = 32'h0000_0000;
 
-    // First cycle issues the lower-word request.
-    @(posedge clk_i);
-    #1;
-    data_rdata_i  = lower_word;
-    data_rvalid_i = 1'b1;
+    do begin
+      @(posedge clk_i);
+      #1;
+      cycles_taken++;
 
-    // Second cycle writes the lower half and issues the upper-word request.
-    @(posedge clk_i);
-    #1;
-    data_rdata_i  = upper_word;
-    data_rvalid_i = 1'b1;
+      if (resp_pending) begin
+        data_rdata_i  = resp_data;
+        data_rvalid_i = 1'b1;
+        resp_pending  = 1'b0;
+      end else begin
+        data_rdata_i  = 32'h0000_0000;
+        data_rvalid_i = 1'b0;
+      end
 
-    // Third cycle writes the upper half and finalizes the tag.
-    @(posedge clk_i);
-    #1;
-    cycles_taken  = 3;
-    data_rvalid_i = 1'b0;
+      if (data_req_o && !data_we_o) begin
+        resp_data    = (req_count == 0) ? lower_word : upper_word;
+        resp_pending = 1'b1;
+        req_count++;
+      end
+    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
 
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
@@ -1188,6 +1195,19 @@ module testbench;
                            output logic [63:0]  upper_addr,
                            output logic [31:0]  upper_wdata,
                            output logic [3:0]   upper_be);
+    logic        resp_pending;
+    int unsigned req_count;
+
+    resp_pending = 1'b0;
+    req_count    = 0;
+    cycles_taken = 0;
+    lower_addr   = 64'h0000_0000_0000_0000;
+    upper_addr   = 64'h0000_0000_0000_0000;
+    lower_wdata  = 32'h0000_0000;
+    upper_wdata  = 32'h0000_0000;
+    lower_be     = 4'b0000;
+    upper_be     = 4'b0000;
+
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
@@ -1195,32 +1215,33 @@ module testbench;
     instr_rdata_alu_i = encoding;
     data_rvalid_i     = 1'b0;
     data_rdata_i      = 32'h0000_0000;
-    #1;
-    lower_addr  = data_addr_o;
-    lower_wdata = data_wdata_o;
-    lower_be    = data_be_o;
 
-    // First cycle accepts the lower-word store.
-    @(posedge clk_i);
-    #1;
-    data_rvalid_i = 1'b1;
-    #1;
-    upper_addr  = data_addr_o;
-    upper_wdata = data_wdata_o;
-    upper_be    = data_be_o;
+    do begin
+      @(posedge clk_i);
+      #1;
+      cycles_taken++;
 
-    // Second cycle accepts the first response while issuing the upper-word store.
-    @(posedge clk_i);
-    #1;
-    data_rvalid_i = 1'b0;
-    #1;
-    data_rvalid_i = 1'b1;
+      if (resp_pending) begin
+        data_rvalid_i = 1'b1;
+        resp_pending  = 1'b0;
+      end else begin
+        data_rvalid_i = 1'b0;
+      end
 
-    // Third cycle accepts the upper-word response and finishes the store.
-    @(posedge clk_i);
-    #1;
-    cycles_taken  = 3;
-    data_rvalid_i = 1'b0;
+      if (data_req_o && data_we_o) begin
+        if (req_count == 0) begin
+          lower_addr  = data_addr_o;
+          lower_wdata = data_wdata_o;
+          lower_be    = data_be_o;
+        end else begin
+          upper_addr  = data_addr_o;
+          upper_wdata = data_wdata_o;
+          upper_be    = data_be_o;
+        end
+        req_count++;
+        resp_pending = 1'b1;
+      end
+    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
 
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
@@ -1238,6 +1259,19 @@ module testbench;
                                          output logic [63:0]  upper_addr,
                                          output logic [31:0]  upper_wdata,
                                          output logic [3:0]   upper_be);
+    logic        resp_pending;
+    int unsigned req_count;
+
+    resp_pending = 1'b0;
+    req_count    = 0;
+    cycles_taken = 0;
+    lower_addr   = 64'h0000_0000_0000_0000;
+    upper_addr   = 64'h0000_0000_0000_0000;
+    lower_wdata  = 32'h0000_0000;
+    upper_wdata  = 32'h0000_0000;
+    lower_be     = 4'b0000;
+    upper_be     = 4'b0000;
+
     @(posedge clk_i);
     #1;
     instr_valid_i     = 1'b1;
@@ -1246,28 +1280,32 @@ module testbench;
     data_rvalid_i     = 1'b0;
     data_rdata_i      = 32'h0000_0000;
 
-    @(posedge clk_i);
-    #1;
-    lower_addr  = data_addr_o;
-    lower_wdata = data_wdata_o;
-    lower_be    = data_be_o;
-    data_rvalid_i = 1'b0;
+    do begin
+      @(posedge clk_i);
+      #1;
+      cycles_taken++;
 
-    @(posedge clk_i);
-    #1;
-    upper_addr  = data_addr_o;
-    upper_wdata = data_wdata_o;
-    upper_be    = data_be_o;
-    data_rvalid_i = 1'b1;
+      if (resp_pending) begin
+        data_rvalid_i = 1'b1;
+        resp_pending  = 1'b0;
+      end else begin
+        data_rvalid_i = 1'b0;
+      end
 
-    @(posedge clk_i);
-    #1;
-    data_rvalid_i = 1'b1;
-
-    @(posedge clk_i);
-    #1;
-    cycles_taken  = 4;
-    data_rvalid_i = 1'b0;
+      if (data_req_o && data_we_o) begin
+        if (req_count == 0) begin
+          lower_addr  = data_addr_o;
+          lower_wdata = data_wdata_o;
+          lower_be    = data_be_o;
+        end else begin
+          upper_addr  = data_addr_o;
+          upper_wdata = data_wdata_o;
+          upper_be    = data_be_o;
+        end
+        req_count++;
+        resp_pending = 1'b1;
+      end
+    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
 
     instr_valid_i     = 1'b0;
     instr_rdata_i     = 32'h0000_0013;
@@ -1278,11 +1316,9 @@ module testbench;
   endtask
 
   // --------------------
-  // Read back a register via the readback mux. While tags still exist, compare
-  // the architectural 64-bit value by inferring compressed upper halves.
+  // Read back a full 64-bit register via the readback mux.
   // --------------------
   logic [31:0] readback_lower, readback_upper;
-  logic [1:0]  readback_tag;
 
   task automatic check_result(input string       test_name,
                               input logic [4:0]   regnum,
@@ -1305,7 +1341,6 @@ module testbench;
     readback_r_upper = 1'b0;
     #1;
     readback_lower = rf_rdata_a_i;
-    readback_tag   = r_a_tag_i;    // tag is combinational from RF
 
     // Read upper half
     readback_r_upper = 1'b1;
@@ -1316,7 +1351,7 @@ module testbench;
     readback_mode = 1'b0;
 
     expected_upper = do_check_upper ? exp_upper : tb_inferred_upper(exp_tag);
-    actual_upper   = (readback_tag == 2'b01) ? readback_upper : tb_inferred_upper(readback_tag);
+    actual_upper   = readback_upper;
     expected_value = {expected_upper, exp_lower};
     actual_value   = {actual_upper, readback_lower};
 
@@ -1328,8 +1363,8 @@ module testbench;
       $display("%s PASS: x%0d value = %016h", test_name, regnum, actual_value);
     end
 
-    $display("%s INFO: raw lower=%08h raw upper=%08h tag=%02b",
-             test_name, readback_lower, readback_upper, readback_tag);
+    $display("%s INFO: raw lower=%08h raw upper=%08h",
+             test_name, readback_lower, readback_upper);
 
     if (actual_cycles !== exp_cycles) begin
       $display("%s NOTE: cycles = %0d, expected old tagged count %0d",
@@ -1377,40 +1412,22 @@ module testbench;
 
   task automatic csr64_write(input csr_num_e    csr_addr,
                              input logic [63:0] csr_wdata);
-    logic [1:0] csr_wdata_tag;
+    @(posedge clk_i);
+    #1;
+    csr64_access_i        = 1'b1;
+    csr64_addr_i          = csr_addr;
+    csr64_wdata_i         = csr_wdata[31:0];
+    csr64_wdata_upper_i   = 1'b0;
+    csr64_wdata_capture_i = 1'b1;
+    csr64_op_i            = CSR_OP_WRITE;
+    csr64_op_en_i         = 1'b0;
 
-    csr_wdata_tag = tb_tag_from_upper(csr_wdata[63:32]);
-
-    if (csr_wdata_tag == 2'b01) begin
-      @(posedge clk_i);
-      #1;
-      csr64_access_i        = 1'b1;
-      csr64_addr_i          = csr_addr;
-      csr64_wdata_i         = csr_wdata[31:0];
-      csr64_wdata_tag_i     = csr_wdata_tag;
-      csr64_wdata_upper_i   = 1'b0;
-      csr64_wdata_capture_i = 1'b1;
-      csr64_op_i            = CSR_OP_WRITE;
-      csr64_op_en_i         = 1'b0;
-
-      @(posedge clk_i);
-      #1;
-      csr64_wdata_i         = csr_wdata[63:32];
-      csr64_wdata_upper_i   = 1'b1;
-      csr64_wdata_capture_i = 1'b0;
-      csr64_op_en_i         = 1'b1;
-    end else begin
-      @(posedge clk_i);
-      #1;
-      csr64_access_i        = 1'b1;
-      csr64_addr_i          = csr_addr;
-      csr64_wdata_i         = csr_wdata[31:0];
-      csr64_wdata_tag_i     = csr_wdata_tag;
-      csr64_wdata_upper_i   = 1'b0;
-      csr64_wdata_capture_i = 1'b0;
-      csr64_op_i            = CSR_OP_WRITE;
-      csr64_op_en_i         = 1'b1;
-    end
+    @(posedge clk_i);
+    #1;
+    csr64_wdata_i         = csr_wdata[63:32];
+    csr64_wdata_upper_i   = 1'b1;
+    csr64_wdata_capture_i = 1'b0;
+    csr64_op_en_i         = 1'b1;
 
     @(posedge clk_i);
     #1;
@@ -1418,7 +1435,6 @@ module testbench;
     csr64_op_en_i          = 1'b0;
     csr64_op_i             = CSR_OP_READ;
     csr64_wdata_i          = 32'h0000_0000;
-    csr64_wdata_tag_i      = 2'b10;
     csr64_wdata_upper_i    = 1'b0;
     csr64_wdata_capture_i  = 1'b0;
   endtask
@@ -1428,7 +1444,6 @@ module testbench;
                                   input logic [63:0] expected_value);
     logic [31:0] actual_lower;
     logic [31:0] actual_upper;
-    logic [1:0]  actual_tag;
     logic [63:0] actual_value;
 
     @(posedge clk_i);
@@ -1441,19 +1456,14 @@ module testbench;
     csr64_rdata_capture_i = 1'b0;
     #1;
     actual_lower = csr64_rdata_o;
-    actual_tag   = csr64_rdata_tag_o;
 
-    if (actual_tag == 2'b01) begin
-      csr64_rdata_capture_i = 1'b1;
-      @(posedge clk_i);
-      #1;
-      csr64_rdata_capture_i = 1'b0;
-      csr64_rdata_upper_i   = 1'b1;
-      #1;
-      actual_upper = csr64_rdata_o;
-    end else begin
-      actual_upper = tb_inferred_upper(actual_tag);
-    end
+    csr64_rdata_capture_i = 1'b1;
+    @(posedge clk_i);
+    #1;
+    csr64_rdata_capture_i = 1'b0;
+    csr64_rdata_upper_i   = 1'b1;
+    #1;
+    actual_upper = csr64_rdata_o;
 
     actual_value = {actual_upper, actual_lower};
     check_value64(test_name, actual_value, expected_value);

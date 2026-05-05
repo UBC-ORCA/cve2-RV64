@@ -47,13 +47,11 @@ module cve2_cs_registers #(
   input  logic                 csr_access_i,
   input  cve2_pkg::csr_num_e   csr_addr_i,
   input  logic [31:0]          csr_wdata_i,
-  input  logic [1:0]           csr_wdata_tag_i,
   input  logic                 csr_wdata_upper_i,
   input  logic                 csr_wdata_capture_i,
   input  cve2_pkg::csr_op_e    csr_op_i,
   input                        csr_op_en_i,
   output logic [31:0]          csr_rdata_o,
-  output logic [1:0]           csr_rdata_tag_o,
   input  logic                 csr_rdata_upper_i,
   input  logic                 csr_rdata_capture_i,
 
@@ -116,23 +114,6 @@ import cve2_pkg::*;
   localparam int unsigned RV32BEnabled = (RV32B == RV32BNone) ? 0 : 1;
   localparam int unsigned RV32MEnabled = (RV32M == RV32MNone) ? 0 : 1;
   localparam int unsigned PMPAddrWidth = (PMPGranularity > 0) ? 33 - PMPGranularity : 32;
-
-  function automatic logic [31:0] inferred_upper_from_tag(input logic [1:0] tag);
-    unique case (tag)
-      2'b11:   inferred_upper_from_tag = 32'hffff_ffff;
-      default: inferred_upper_from_tag = 32'h0000_0000;
-    endcase
-  endfunction
-
-  function automatic logic [1:0] tag_from_upper(input logic [31:0] upper);
-    if (upper == 32'h0000_0000) begin
-      tag_from_upper = 2'b10;
-    end else if (upper == 32'hffff_ffff) begin
-      tag_from_upper = 2'b11;
-    end else begin
-      tag_from_upper = 2'b01;
-    end
-  endfunction
 
   // misa
   localparam logic [63:0] MISA_VALUE =
@@ -524,8 +505,7 @@ import cve2_pkg::*;
 
   assign csr_wdata_full = csr_wdata_upper_i ?
                           {csr_wdata_i, csr_wdata_lower_q} :
-                          {inferred_upper_from_tag(csr_wdata_tag_i), csr_wdata_i};
-  assign csr_rdata_tag_o = tag_from_upper(csr_rdata_int[63:32]);
+                          {32'h0000_0000, csr_wdata_i};
   assign csr_rdata_o     = csr_rdata_upper_i ? csr_rdata_upper_q : csr_rdata_int[31:0];
 
   // write logic
