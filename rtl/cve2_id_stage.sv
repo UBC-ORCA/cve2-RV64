@@ -1049,7 +1049,7 @@ module cve2_id_stage #(
         need_upper = 1'b0;
       end
       OP_CLASS_PCADD: begin
-        need_upper = a_explicit || b_explicit || upper_not_inferable;
+        need_upper = rf_we_dec && (rf_waddr_id_o != 5'd0);
       end
       default: need_upper = 1'b0;
     endcase
@@ -1181,8 +1181,7 @@ module cve2_id_stage #(
 
   assign csr_read_needs_upper = csr_access_o &&
                                 rf_we_dec &&
-                                (rf_waddr_id_o != 5'd0) &&
-                                (csr_rdata_tag_i == 2'b01);
+                                (rf_waddr_id_o != 5'd0);
   assign csr_need_upper_cycle = (id_fsm_q == FIRST_CYCLE) &&
                                 csr_access_o &&
                                 (csr_src_needs_upper || csr_read_needs_upper);
