@@ -267,6 +267,8 @@ module cve2_id_stage #(
   logic        both_00;
   logic        upper_not_inferable;
   logic [31:0] imm_b_eff;
+  logic        use_upper_half_operand_a;
+  logic        use_upper_half_operand_b;
   logic        use_upper_half_operands;
   logic        cmp_is_compare;
   logic        cmp_is_lower_cycle;
@@ -277,6 +279,26 @@ module cve2_id_stage #(
   logic        cmp_b_upper_inferred;
   logic        cmp_a_upper_ones;
   logic        cmp_b_upper_ones;
+  logic        shift_is_64;
+  logic        shift_is_left;
+  logic        shift_is_right;
+  logic        shift_is_arith;
+  logic [5:0]  shift_amt_now;
+  logic [5:0]  shift_amt_q;
+  logic [5:0]  shift_amt;
+  logic [5:0]  shift_amt_compl;
+  logic [1:0]  shift_src_tag_q;
+  logic        shift_amt_zero;
+  logic        shift_amt_ge32;
+  logic        shift_amt_lt32_nonzero;
+  logic        shift_src_explicit;
+  logic        shift_first_save;
+  logic        shift_capture;
+  logic        shift_imd_we;
+  logic        shift_use_upper_a;
+  logic [5:0]  shift_amt_to_alu;
+  logic [31:0] alu_operand_b_base;
+  logic [31:0] rf_wdata_shift;
 
   // Multiplier Control
   logic        mult_en_id, mult_en_dec;
@@ -308,7 +330,13 @@ module cve2_id_stage #(
   // ID-EX FSM //
   ///////////////
 
-  typedef enum logic [1:0] { FIRST_CYCLE, MULTI_CYCLE, CMP_LOWER_CYCLE } id_fsm_e;
+  typedef enum logic [2:0] {
+    FIRST_CYCLE,
+    MULTI_CYCLE,
+    CMP_LOWER_CYCLE,
+    SHIFT_LOW_CYCLE,
+    SHIFT_UPPER_CYCLE
+  } id_fsm_e;
   id_fsm_e id_fsm_q, id_fsm_d;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin : id_pipeline_reg
@@ -451,10 +479,11 @@ module cve2_id_stage #(
       IMM_B_INCR_ADDR})
 
   // For tagged upper-half cycles, immediate's "upper" is its sign-extension.
-  assign imm_b_eff = use_upper_half_operands
+  assign imm_b_eff = use_upper_half_operand_b
                    ? {32{imm_b[31]}}
                    : imm_b;
-  assign alu_operand_b = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b_eff : rf_rdata_b_fwd;
+  assign alu_operand_b_base = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b_eff : rf_rdata_b_fwd;
+  assign alu_operand_b      = shift_is_64 ? {26'h0, shift_amt_to_alu} : alu_operand_b_base;
 
   /////////////////////////////////////////
   // Multicycle Operation Stage Register //
@@ -466,11 +495,23 @@ module cve2_id_stage #(
         imd_val_q[i] <= '0;
       end else if (imd_val_we_ex_i[i]) begin
         imd_val_q[i] <= imd_val_d_ex_i[i];
+      end else if ((i == 0) && shift_imd_we) begin
+        imd_val_q[i] <= {2'b00, result_ex_i};
       end
     end
   end
 
   assign imd_val_q_ex_o = imd_val_q;
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin : shift_state_reg
+    if (!rst_ni) begin
+      shift_amt_q     <= 6'h00;
+      shift_src_tag_q <= 2'b00;
+    end else if (shift_capture) begin
+      shift_amt_q     <= shift_amt_now;
+      shift_src_tag_q <= r_a_tag_i;
+    end
+  end
 
   // Carry register: captures lower-cycle carry for adder-class 2-cycle ops.
   // Cleared otherwise so stale carries can't leak into a subsequent op.
@@ -495,10 +536,10 @@ module cve2_id_stage #(
 
   always_comb begin : rf_wdata_id_mux
     unique case ($bits(rf_wd_sel_e)'({rf_wdata_sel}))
-      RF_WD_EX:     rf_wdata_id_o   = result_ex_i;
+      RF_WD_EX:     rf_wdata_id_o   = shift_is_64 ? rf_wdata_shift : result_ex_i;
       RF_WD_CSR:    rf_wdata_id_o   = csr_rdata_i;
       RF_WD_COPROC: rf_wdata_id_o   = XInterface? x_result_i.data : result_ex_i;
-      default:      rf_wdata_id_o   = result_ex_i;
+      default:      rf_wdata_id_o   = shift_is_64 ? rf_wdata_shift : result_ex_i;
     endcase
   end
 
@@ -684,7 +725,7 @@ module cve2_id_stage #(
           op_class = OP_CLASS_COMPARE;
         end
         ALU_SLL, ALU_SRL, ALU_SRA: begin
-          op_class = is_word_op ? OP_CLASS_SHIFT : OP_CLASS_NONE;
+          op_class = is_op_or_op_imm ? OP_CLASS_SHIFT : OP_CLASS_NONE;
         end
         default: op_class = OP_CLASS_NONE;
       endcase
@@ -692,6 +733,111 @@ module cve2_id_stage #(
   end
 
   assign op_uses_tagged_path = (op_class != OP_CLASS_NONE);
+
+  // =========================================================================
+  // RV64 shift sequencing control
+  // =========================================================================
+  assign shift_is_64            = (op_class == OP_CLASS_SHIFT) && !is_word_op;
+  assign shift_is_left          = shift_is_64 && (alu_operator == ALU_SLL);
+  assign shift_is_right         = shift_is_64 && ((alu_operator == ALU_SRL) ||
+                                                  (alu_operator == ALU_SRA));
+  assign shift_is_arith         = shift_is_64 && (alu_operator == ALU_SRA);
+  assign shift_amt_now          = (alu_op_b_mux_sel == OP_B_IMM) ?
+                                  instr_rdata_alu_i[25:20] : rf_rdata_b_i[5:0];
+  assign shift_amt              = (id_fsm_q == FIRST_CYCLE) ? shift_amt_now : shift_amt_q;
+  assign shift_amt_compl        = 6'd32 - shift_amt;
+  assign shift_amt_zero         = (shift_amt == 6'h00);
+  assign shift_amt_ge32         = shift_amt[5];
+  assign shift_amt_lt32_nonzero = !shift_amt_zero && !shift_amt_ge32;
+  assign shift_src_explicit     = ((id_fsm_q == FIRST_CYCLE) ? r_a_tag_i :
+                                                               shift_src_tag_q) == 2'b01;
+  assign shift_first_save       = shift_is_64 &&
+                                  (id_fsm_q == FIRST_CYCLE) &&
+                                  !shift_amt_zero &&
+                                  !(shift_is_right && shift_amt_ge32);
+  assign shift_capture          = instr_executing_spec &&
+                                  (id_fsm_q == FIRST_CYCLE) &&
+                                  shift_is_64;
+  assign shift_imd_we           = instr_executing_spec && shift_first_save;
+
+  always_comb begin
+    shift_use_upper_a = 1'b0;
+    if (shift_is_64) begin
+      unique case (id_fsm_q)
+        FIRST_CYCLE: begin
+          shift_use_upper_a = shift_is_right && shift_amt_ge32;
+        end
+        SHIFT_LOW_CYCLE: begin
+          shift_use_upper_a = shift_is_right && shift_amt_lt32_nonzero;
+        end
+        SHIFT_UPPER_CYCLE: begin
+          shift_use_upper_a = shift_amt_zero || shift_amt_lt32_nonzero;
+        end
+        default: shift_use_upper_a = 1'b0;
+      endcase
+    end
+  end
+
+  always_comb begin
+    shift_amt_to_alu = shift_amt;
+    if (shift_is_64) begin
+      unique case (id_fsm_q)
+        FIRST_CYCLE: begin
+          if (shift_is_left && shift_amt_lt32_nonzero) begin
+            shift_amt_to_alu = shift_amt_compl;
+          end else begin
+            shift_amt_to_alu = shift_amt;
+          end
+        end
+        SHIFT_LOW_CYCLE: begin
+          // The ALU internally complements shift amounts after the first cycle.
+          if (shift_is_right) begin
+            shift_amt_to_alu = shift_amt;
+          end else if (shift_amt_lt32_nonzero) begin
+            shift_amt_to_alu = shift_amt_compl;
+          end else begin
+            shift_amt_to_alu = shift_amt;
+          end
+        end
+        SHIFT_UPPER_CYCLE: begin
+          // The ALU internally complements shift amounts after the first cycle.
+          if (shift_amt_lt32_nonzero) begin
+            shift_amt_to_alu = shift_amt_compl;
+          end else begin
+            shift_amt_to_alu = shift_amt;
+          end
+        end
+        default: shift_amt_to_alu = shift_amt;
+      endcase
+    end
+  end
+
+  always_comb begin
+    rf_wdata_shift = result_ex_i;
+    if (shift_is_64) begin
+      unique case (id_fsm_q)
+        SHIFT_LOW_CYCLE: begin
+          if (shift_is_left && shift_amt_ge32) begin
+            rf_wdata_shift = 32'h0000_0000;
+          end else if (shift_is_right) begin
+            rf_wdata_shift = imd_val_q[0][31:0] | result_ex_i;
+          end else begin
+            rf_wdata_shift = result_ex_i;
+          end
+        end
+        SHIFT_UPPER_CYCLE: begin
+          if (shift_is_left && shift_amt_ge32) begin
+            rf_wdata_shift = imd_val_q[0][31:0];
+          end else if (shift_is_left) begin
+            rf_wdata_shift = imd_val_q[0][31:0] | result_ex_i;
+          end else begin
+            rf_wdata_shift = result_ex_i;
+          end
+        end
+        default: rf_wdata_shift = result_ex_i;
+      endcase
+    end
+  end
 
   // =========================================================================
   // Effective operand tags
@@ -702,7 +848,7 @@ module cve2_id_stage #(
                    ? (imm_b[31] ? 2'b11 : 2'b10)
                    : r_b_tag_i;
 
-  assign tag_a_eff = r_a_tag_i;
+  assign tag_a_eff = (shift_is_64 && (id_fsm_q != FIRST_CYCLE)) ? shift_src_tag_q : r_a_tag_i;
 
   always_comb begin
     if (alu_operator == ALU_SUB) begin
@@ -755,10 +901,16 @@ module cve2_id_stage #(
                                 (id_fsm_q == CMP_LOWER_CYCLE));
   assign cmp_need_lower_after_upper = cmp_use_upper_first && alu_is_equal_result_i;
 
-  assign use_upper_half_operands = ((id_fsm_q == MULTI_CYCLE) &&
-                                    op_uses_tagged_path &&
-                                    (op_class != OP_CLASS_COMPARE)) ||
-                                   cmp_use_upper_first;
+  assign use_upper_half_operand_a = ((id_fsm_q == MULTI_CYCLE) &&
+                                     op_uses_tagged_path &&
+                                     (op_class != OP_CLASS_COMPARE)) ||
+                                    cmp_use_upper_first ||
+                                    shift_use_upper_a;
+  assign use_upper_half_operand_b = ((id_fsm_q == MULTI_CYCLE) &&
+                                     op_uses_tagged_path &&
+                                     (op_class != OP_CLASS_COMPARE)) ||
+                                    cmp_use_upper_first;
+  assign use_upper_half_operands  = use_upper_half_operand_a || use_upper_half_operand_b;
 
   // =========================================================================
   // need_upper: 1 = 2-cycle execution required
@@ -795,6 +947,15 @@ module cve2_id_stage #(
     w_tag_id_o = 2'b00;
     if (is_word_op) begin
       w_tag_id_o = result_ex_i[31] ? 2'b11 : 2'b10;
+    end else if (shift_is_64) begin
+      if ((id_fsm_q == FIRST_CYCLE) && shift_amt_zero && !shift_src_explicit) begin
+        w_tag_id_o = r_a_tag_i;
+      end else if ((id_fsm_q == FIRST_CYCLE) && shift_is_right && shift_amt_ge32) begin
+        w_tag_id_o = (shift_is_arith && rf_rdata_a_fwd[31]) ? 2'b11 : 2'b10;
+      end else begin
+        // Provisional tag for lower writes that are followed by an upper write.
+        w_tag_id_o = 2'b01;
+      end
     end else begin
       unique case (op_class)
         OP_CLASS_ADDER: begin
@@ -843,6 +1004,24 @@ module cve2_id_stage #(
         ALU_LT:  alu_operator_eff = ALU_LTU;
         ALU_GE:  alu_operator_eff = ALU_GEU;
         ALU_SLT: alu_operator_eff = ALU_SLTU;
+        default: alu_operator_eff = alu_operator;
+      endcase
+    end else if (shift_is_64) begin
+      unique case (id_fsm_q)
+        FIRST_CYCLE: begin
+          if ((shift_is_left && shift_amt_lt32_nonzero) ||
+              (shift_is_right && !shift_amt_ge32)) begin
+            alu_operator_eff = ALU_SRL;
+          end else begin
+            alu_operator_eff = alu_operator;
+          end
+        end
+        SHIFT_LOW_CYCLE: begin
+          alu_operator_eff = ALU_SLL;
+        end
+        SHIFT_UPPER_CYCLE: begin
+          alu_operator_eff = shift_is_left ? ALU_SLL : alu_operator;
+        end
         default: alu_operator_eff = alu_operator;
       endcase
     end
@@ -946,7 +1125,16 @@ module cve2_id_stage #(
               jump_set_raw  = jump_set_dec;
             end
             (op_uses_tagged_path && !branch_in_dec): begin
-              if (op_class == OP_CLASS_COMPARE) begin
+              if (shift_is_64) begin
+                if (shift_first_save) begin
+                  id_fsm_d  = SHIFT_LOW_CYCLE;
+                  stall_alu = 1'b1;
+                  rf_we_raw = 1'b0;
+                end else if (shift_amt_zero && shift_src_explicit) begin
+                  id_fsm_d  = SHIFT_UPPER_CYCLE;
+                  stall_alu = 1'b1;
+                end
+              end else if (op_class == OP_CLASS_COMPARE) begin
                 if (cmp_need_lower_after_upper) begin
                   id_fsm_d  = CMP_LOWER_CYCLE;
                   stall_alu = 1'b1;
@@ -1028,15 +1216,28 @@ module cve2_id_stage #(
           end
         end
 
+        SHIFT_LOW_CYCLE: begin
+          id_fsm_d  = SHIFT_UPPER_CYCLE;
+          stall_alu = 1'b1;
+        end
+
+        SHIFT_UPPER_CYCLE: begin
+          id_fsm_d        = FIRST_CYCLE;
+          rf_w_upper_id_o = 1'b1;
+        end
+
         default: begin
           id_fsm_d          = FIRST_CYCLE;
         end
       endcase
     end
 
-    if (use_upper_half_operands) begin
+    if (use_upper_half_operand_a) begin
       r_a_upper_o = 1'b1;
-      r_b_upper_o = (alu_op_b_mux_sel != OP_B_IMM);
+    end
+
+    if (use_upper_half_operand_b && (alu_op_b_mux_sel != OP_B_IMM)) begin
+      r_b_upper_o = 1'b1;
     end
 
     if (lsu_store_upper_half && (r_b_tag_i == 2'b01)) begin

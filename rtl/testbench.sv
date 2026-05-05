@@ -705,6 +705,15 @@ module testbench;
   localparam logic [31:0] SLLW_X3_X1_X2   = 32'h002091bb; // SLLW x3, x1, x2
   localparam logic [31:0] SRLW_X3_X1_X2   = 32'h0020d1bb; // SRLW x3, x1, x2
   localparam logic [31:0] SRAW_X3_X1_X2   = 32'h4020d1bb; // SRAW x3, x1, x2
+  localparam logic [31:0] SLL_X3_X1_X2    = 32'h002091b3; // SLL  x3, x1, x2
+  localparam logic [31:0] SRL_X3_X1_X2    = 32'h0020d1b3; // SRL  x3, x1, x2
+  localparam logic [31:0] SRA_X3_X1_X2    = 32'h4020d1b3; // SRA  x3, x1, x2
+  localparam logic [31:0] SLL_X1_X1_X2    = 32'h002090b3; // SLL  x1, x1, x2
+  localparam logic [31:0] SRL_X2_X1_X2    = 32'h0020d133; // SRL  x2, x1, x2
+  localparam logic [31:0] SLLI_X3_X1_0    = 32'h00009193; // SLLI x3, x1, 0
+  localparam logic [31:0] SLLI_X3_X1_36   = 32'h02409193; // SLLI x3, x1, 36
+  localparam logic [31:0] SRLI_X3_X1_36   = 32'h0240d193; // SRLI x3, x1, 36
+  localparam logic [31:0] SRAI_X3_X1_36   = 32'h4240d193; // SRAI x3, x1, 36
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -1831,6 +1840,65 @@ module testbench;
 
     $display("\n==============================");
     $display("All %0d W-variant tests complete", 9);
+    $display("==============================");
+
+    // ==========================================================
+    // RV64 shift tests
+    // ==========================================================
+    $display("\n========== RV64 shift tests ==========");
+
+    $display("\n---- SH-1: SLL cross-half shift ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h8000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
+    inject_instr(SLL_X3_X1_X2, cycles);
+    check_result("SH01", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0003, 1'b1);
+
+    $display("\n---- SH-2: SLLI shamt[5] path ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0012, 2'b10);
+    inject_instr(SLLI_X3_X1_36, cycles);
+    check_result("SH02", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0120, 1'b1);
+
+    $display("\n---- SH-3: SRL cross-half shift ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
+    inject_instr(SRL_X3_X1_X2, cycles);
+    check_result("SH03", 5'd3, 32'h8000_0000, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
+
+    $display("\n---- SH-4: SRA cross-half shift ----");
+    write_rf_64(5'd1, 32'h8000_0000, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
+    inject_instr(SRA_X3_X1_X2, cycles);
+    check_result("SH04", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'hc000_0000, 1'b1);
+
+    $display("\n---- SH-5: SRLI shamt >= 32 reads upper first ----");
+    write_rf_64(5'd1, 32'h1234_5678, 32'h89ab_cdef, 2'b01);
+    inject_instr(SRLI_X3_X1_36, cycles);
+    check_result("SH05", 5'd3, 32'h0123_4567, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- SH-6: SRAI shamt >= 32 sign-fills upper ----");
+    write_rf_64(5'd1, 32'h9234_5678, 32'h89ab_cdef, 2'b01);
+    inject_instr(SRAI_X3_X1_36, cycles);
+    check_result("SH06", 5'd3, 32'hf923_4567, 2'b11, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- SH-7: SLLI zero shift copies explicit upper ----");
+    write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
+    inject_instr(SLLI_X3_X1_0, cycles);
+    check_result("SH07", 5'd3, 32'h9abc_def0, 2'b01, 2, cycles, 32'h1234_5678, 1'b1);
+
+    $display("\n---- SH-8: SLL rd==rs1 keeps original source halves ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h8000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
+    inject_instr(SLL_X1_X1_X2, cycles);
+    check_result("SH08", 5'd1, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0003, 1'b1);
+
+    $display("\n---- SH-9: SRL rd==rs2 keeps original shamt ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
+    inject_instr(SRL_X2_X1_X2, cycles);
+    check_result("SH09", 5'd2, 32'h8000_0000, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
+
+    $display("\n==============================");
+    $display("All %0d RV64 shift tests complete", 9);
     $display("==============================");
 
 

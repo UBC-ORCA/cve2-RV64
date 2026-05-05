@@ -365,7 +365,7 @@ module cve2_decoder #(
 
           3'b001: begin
             unique case (instr[31:27])
-              5'b0_0000: illegal_insn = (instr[26:25] == 2'b00) ? 1'b0 : 1'b1;        // slli
+              5'b0_0000: illegal_insn = (instr[26] == 1'b0) ? 1'b0 : 1'b1;            // slli
               5'b0_0100: begin                                                        // sloi
                 illegal_insn = (RV32B == RV32BOTEarlGrey || RV32B == RV32BFull) ? 1'b0 : 1'b1;
               end
@@ -407,7 +407,7 @@ module cve2_decoder #(
             end else begin
               unique case (instr[31:27])
                 5'b0_0000,                                                             // srli
-                5'b0_1000: illegal_insn = (instr[26:25] == 2'b00) ? 1'b0 : 1'b1;       // srai
+                5'b0_1000: illegal_insn = (instr[26] == 1'b0) ? 1'b0 : 1'b1;           // srai
 
                 5'b0_0100: begin                                                       // sroi
                   illegal_insn = (RV32B == RV32BOTEarlGrey || RV32B == RV32BFull) ? 1'b0 : 1'b1;
