@@ -290,17 +290,11 @@ module cve2_id_stage #(
   logic [31:0] imm_b_eff;
   logic        use_upper_half_operand_a;
   logic        use_upper_half_operand_b;
-  logic        use_upper_half_operands;
   logic        cmp_is_compare;
   logic        cmp_is_lower_cycle;
   logic        cmp_write_upper_cycle;
   logic        cmp_use_upper_first;
   logic        cmp_need_lower_after_upper;
-  logic        cmp_upper_inferred_equal;
-  logic        cmp_a_upper_inferred;
-  logic        cmp_b_upper_inferred;
-  logic        cmp_a_upper_ones;
-  logic        cmp_b_upper_ones;
   logic        shift_is_64;
   logic        shift_is_left;
   logic        shift_is_right;
@@ -996,16 +990,9 @@ module cve2_id_stage #(
   end
 
   // =========================================================================
-  // Tag-aware compare control
+  // Compare control
   // =========================================================================
   assign cmp_is_compare       = (op_class == OP_CLASS_COMPARE);
-  assign cmp_a_upper_inferred = (tag_a_eff != 2'b01);
-  assign cmp_b_upper_inferred = (tag_b_raw != 2'b01);
-  assign cmp_a_upper_ones     = (tag_a_eff == 2'b11);
-  assign cmp_b_upper_ones     = (tag_b_raw == 2'b11);
-
-  assign cmp_upper_inferred_equal = 1'b0;
-
   assign cmp_use_upper_first = cmp_is_compare &&
                                (id_fsm_q == FIRST_CYCLE);
   assign cmp_is_lower_cycle  = cmp_is_compare &&
@@ -1028,8 +1015,6 @@ module cve2_id_stage #(
                                     cmp_use_upper_first ||
                                     pcadd_upper_cycle ||
                                     addr_upper_cycle;
-  assign use_upper_half_operands  = use_upper_half_operand_a || use_upper_half_operand_b;
-
   // =========================================================================
   // need_upper: 1 = 2-cycle execution required
   // =========================================================================
@@ -1507,28 +1492,12 @@ module cve2_id_stage #(
   `ASSERT(IbexStallIfValidInstrNotExecuting,
     instr_valid_i & ~instr_fetch_err_i & ~instr_executing & controller_run |-> stall_id)
 
-    // =========================================================================
-  // Forwarding mux — substitutes inferred upper for non-explicit tags during
-  // the upper-half cycle of any tagged ALU op.
+  // =========================================================================
+  // Forwarding mux
   // =========================================================================
   always_comb begin
-    if (use_upper_half_operands) begin
-      case (tag_a_eff)
-        2'b00, 2'b10: rf_rdata_a_fwd = 32'h0000_0000;
-        2'b11:        rf_rdata_a_fwd = 32'hFFFF_FFFF;
-        default:      rf_rdata_a_fwd = rf_rdata_a_i;
-      endcase
-      // For B, use tag_b_raw (not eff) — forwarding mux delivers the actual
-      // register upper; SUB's negation happens inside the ALU's negate path.
-      case (tag_b_raw)
-        2'b00, 2'b10: rf_rdata_b_fwd = 32'h0000_0000;
-        2'b11:        rf_rdata_b_fwd = 32'hFFFF_FFFF;
-        default:      rf_rdata_b_fwd = rf_rdata_b_i;
-      endcase
-    end else begin
-      rf_rdata_a_fwd = rf_rdata_a_i;
-      rf_rdata_b_fwd = rf_rdata_b_i;
-    end
+    rf_rdata_a_fwd = rf_rdata_a_i;
+    rf_rdata_b_fwd = rf_rdata_b_i;
   end
 
   always_comb begin

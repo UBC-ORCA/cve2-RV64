@@ -852,11 +852,11 @@ module testbench;
   endtask
 
   // --------------------
-  // Write a 32-bit register (lower only, tag 00)
+  // Write a 32-bit register with an explicit zero upper half.
   // --------------------
   task automatic write_rf_32(input logic [4:0]  addr,
                              input logic [31:0] data);
-    write_rf_half(addr, data, 1'b0, 2'b00);
+    write_rf_64(addr, 32'h0000_0000, data, 2'b00);
   endtask
 
   task automatic set_pc64(input logic [31:0] lower_val,
