@@ -293,6 +293,7 @@ module cve2_id_stage #(
   logic        use_upper_half_operands;
   logic        cmp_is_compare;
   logic        cmp_is_lower_cycle;
+  logic        cmp_write_upper_cycle;
   logic        cmp_use_upper_first;
   logic        cmp_need_lower_after_upper;
   logic        cmp_upper_inferred_equal;
@@ -383,10 +384,11 @@ module cve2_id_stage #(
   // ID-EX FSM //
   ///////////////
 
-  typedef enum logic [2:0] {
+  typedef enum logic [3:0] {
     FIRST_CYCLE,
     MULTI_CYCLE,
     CMP_LOWER_CYCLE,
+    CMP_UPPER_WRITE_CYCLE,
     SHIFT_LOW_CYCLE,
     SHIFT_UPPER_CYCLE,
     PC_UPPER_CYCLE,
@@ -625,10 +627,12 @@ module cve2_id_stage #(
 
   always_comb begin : rf_wdata_id_mux
     unique case ($bits(rf_wd_sel_e)'({rf_wdata_sel}))
-      RF_WD_EX:     rf_wdata_id_o   = shift_is_64 ? rf_wdata_shift : result_ex_i;
+      RF_WD_EX:     rf_wdata_id_o   = cmp_write_upper_cycle ? 32'h0000_0000 :
+                                      (shift_is_64 ? rf_wdata_shift : result_ex_i);
       RF_WD_CSR:    rf_wdata_id_o   = csr_rdata_i;
       RF_WD_COPROC: rf_wdata_id_o   = XInterface? x_result_i.data : result_ex_i;
-      default:      rf_wdata_id_o   = shift_is_64 ? rf_wdata_shift : result_ex_i;
+      default:      rf_wdata_id_o   = cmp_write_upper_cycle ? 32'h0000_0000 :
+                                      (shift_is_64 ? rf_wdata_shift : result_ex_i);
     endcase
   end
 
@@ -1000,18 +1004,14 @@ module cve2_id_stage #(
   assign cmp_a_upper_ones     = (tag_a_eff == 2'b11);
   assign cmp_b_upper_ones     = (tag_b_raw == 2'b11);
 
-  // In RV64 mode tag 00 is treated like tag 10 for compare: inferred upper zero.
-  assign cmp_upper_inferred_equal = cmp_a_upper_inferred &&
-                                    cmp_b_upper_inferred &&
-                                    (cmp_a_upper_ones == cmp_b_upper_ones);
+  assign cmp_upper_inferred_equal = 1'b0;
 
-  // If inferred uppers are equal, the first cycle compares lower32. Otherwise it compares upper32.
   assign cmp_use_upper_first = cmp_is_compare &&
-                               (id_fsm_q == FIRST_CYCLE) &&
-                               !cmp_upper_inferred_equal;
+                               (id_fsm_q == FIRST_CYCLE);
   assign cmp_is_lower_cycle  = cmp_is_compare &&
-                               (((id_fsm_q == FIRST_CYCLE) && cmp_upper_inferred_equal) ||
-                                (id_fsm_q == CMP_LOWER_CYCLE));
+                               (id_fsm_q == CMP_LOWER_CYCLE);
+  assign cmp_write_upper_cycle = cmp_is_compare &&
+                                 (id_fsm_q == CMP_UPPER_WRITE_CYCLE);
   assign cmp_need_lower_after_upper = cmp_use_upper_first && alu_is_equal_result_i;
 
   assign use_upper_half_operand_a = ((id_fsm_q == MULTI_CYCLE) &&
@@ -1037,15 +1037,10 @@ module cve2_id_stage #(
     need_upper = 1'b0;
     unique case (op_class)
       OP_CLASS_ADDER: begin
-        need_upper = is_word_op ? 1'b0 : (a_explicit || b_explicit || upper_not_inferable);
+        need_upper = !is_word_op;
       end
       OP_CLASS_BITWISE: begin
-        case (alu_operator)
-          ALU_AND: need_upper = (a_explicit && !b_zero) || (b_explicit && !a_zero);
-          ALU_OR:  need_upper = (a_explicit && !b_ones) || (b_explicit && !a_ones);
-          ALU_XOR: need_upper =  a_explicit ||  b_explicit;
-          default: need_upper = 1'b0;
-        endcase
+        need_upper = 1'b1;
       end
       OP_CLASS_COMPARE: begin
         need_upper = cmp_need_lower_after_upper && !branch_in_dec;
@@ -1327,6 +1322,9 @@ module cve2_id_stage #(
                   id_fsm_d  = CMP_LOWER_CYCLE;
                   stall_alu = 1'b1;
                   rf_we_raw = 1'b0;
+                end else begin
+                  id_fsm_d  = CMP_UPPER_WRITE_CYCLE;
+                  stall_alu = 1'b1;
                 end
               end else if (op_class == OP_CLASS_PCADD) begin
                 if (need_upper) begin
@@ -1421,8 +1419,14 @@ module cve2_id_stage #(
             end
             perf_branch_o = 1'b1;
           end else begin
-            id_fsm_d = FIRST_CYCLE;
+            id_fsm_d  = CMP_UPPER_WRITE_CYCLE;
+            stall_alu = 1'b1;
           end
+        end
+
+        CMP_UPPER_WRITE_CYCLE: begin
+          id_fsm_d        = FIRST_CYCLE;
+          rf_w_upper_id_o = 1'b1;
         end
 
         SHIFT_LOW_CYCLE: begin
