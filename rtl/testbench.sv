@@ -151,10 +151,10 @@ module testbench;
     csr_rdata_full_i  = 64'h0;
   end
 
-  function automatic logic [31:0] tb_inferred_upper(input logic [1:0] tag);
-    unique case (tag)
-      2'b11:   tb_inferred_upper = 32'hffff_ffff;
-      default: tb_inferred_upper = 32'h0000_0000;
+  function automatic logic [31:0] tb_expected_upper_from_code(input logic [1:0] upper_code);
+    unique case (upper_code)
+      2'b11:   tb_expected_upper_from_code = 32'hffff_ffff;
+      default: tb_expected_upper_from_code = 32'h0000_0000;
     endcase
   endfunction
 
@@ -783,9 +783,9 @@ module testbench;
   task automatic write_rf_half(input logic [4:0] addr,
                                input logic [31:0] data,
                                input logic        upper,
-                               input logic [1:0]  tag);
-    logic [1:0] unused_tag;
-    unused_tag = tag;
+                               input logic [1:0]  upper_code);
+    logic [1:0] unused_upper_code;
+    unused_upper_code = upper_code;
     @(posedge clk_i);
     #1;
     preload_mode    = 1'b1;
@@ -800,14 +800,14 @@ module testbench;
   endtask
 
   // --------------------
-  // Write a full 64-bit register (lower then upper). Final tag applied on upper write.
+  // Write a full 64-bit register through the two 32-bit RF banks.
   // --------------------
   task automatic write_rf_64(input logic [4:0]  addr,
                              input logic [31:0] upper_val,
                              input logic [31:0] lower_val,
-                             input logic [1:0]  tag);
-    write_rf_half(addr, lower_val, 1'b0, 2'b01);  // temp tag, gets overwritten
-    write_rf_half(addr, upper_val, 1'b1, tag);     // final tag
+                             input logic [1:0]  upper_code);
+    write_rf_half(addr, lower_val, 1'b0, 2'b01);
+    write_rf_half(addr, upper_val, 1'b1, upper_code);
   endtask
 
   // --------------------
@@ -820,9 +820,9 @@ module testbench;
 
   task automatic set_pc64(input logic [31:0] lower_val,
                           input logic [31:0] upper_val,
-                          input logic [1:0]  tag);
-    logic [1:0] unused_tag;
-    unused_tag = tag;
+                          input logic [1:0]  upper_code);
+    logic [1:0] unused_upper_code;
+    unused_upper_code = upper_code;
     pc_id_i       = lower_val;
     pc_id_upper_i = upper_val;
     #1;
@@ -1323,7 +1323,7 @@ module testbench;
   task automatic check_result(input string       test_name,
                               input logic [4:0]   regnum,
                               input logic [31:0]  exp_lower,
-                              input logic [1:0]   exp_tag,
+                              input logic [1:0]   exp_upper_code,
                               input int unsigned  exp_cycles,
                               input int unsigned  actual_cycles,
                               input logic [31:0]  exp_upper,
@@ -1350,7 +1350,7 @@ module testbench;
     // Release read port
     readback_mode = 1'b0;
 
-    expected_upper = do_check_upper ? exp_upper : tb_inferred_upper(exp_tag);
+    expected_upper = do_check_upper ? exp_upper : tb_expected_upper_from_code(exp_upper_code);
     actual_upper   = readback_upper;
     expected_value = {expected_upper, exp_lower};
     actual_value   = {actual_upper, readback_lower};
@@ -1367,7 +1367,7 @@ module testbench;
              test_name, readback_lower, readback_upper);
 
     if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected old tagged count %0d",
+      $display("%s NOTE: cycles = %0d, expected previous count %0d",
                test_name, actual_cycles, exp_cycles);
     end else
       $display("%s PASS: cycles = %0d", test_name, actual_cycles);
@@ -1382,7 +1382,7 @@ module testbench;
                                    input int unsigned exp_cycles,
                                    input int unsigned actual_cycles);
     if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected old tagged count %0d",
+      $display("%s NOTE: cycles = %0d, expected previous count %0d",
                test_name, actual_cycles, exp_cycles);
     end else begin
       $display("%s PASS: cycles = %0d", test_name, actual_cycles);
@@ -1548,7 +1548,7 @@ module testbench;
     end
 
     if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected old tagged count %0d",
+      $display("%s NOTE: cycles = %0d, expected previous count %0d",
                test_name, actual_cycles, exp_cycles);
     end else begin
       $display("%s PASS: cycles = %0d", test_name, actual_cycles);

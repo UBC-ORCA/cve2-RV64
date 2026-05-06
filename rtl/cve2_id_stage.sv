@@ -264,7 +264,7 @@ module cve2_id_stage #(
   logic        op_uses_64_path;
   logic        is_op_or_op_imm;
   logic        is_word_op;
-  logic        need_upper;
+  logic        needs_upper_cycle;
   logic [31:0] imm_b_eff;
   logic        use_upper_half_operand_a;
   logic        use_upper_half_operand_b;
@@ -284,7 +284,6 @@ module cve2_id_stage #(
   logic        shift_amt_zero;
   logic        shift_amt_ge32;
   logic        shift_amt_lt32_nonzero;
-  logic        shift_src_explicit;
   logic        shift_first_save;
   logic        shift_capture;
   logic        shift_imd_we;
@@ -513,7 +512,7 @@ module cve2_id_stage #(
       IMM_B_INCR_PC,
       IMM_B_INCR_ADDR})
 
-  // For tagged upper-half cycles, immediate's "upper" is its sign-extension.
+  // For upper-half cycles, immediate's upper value is its sign-extension.
   assign imm_b_eff = use_upper_half_operand_b
                    ? {32{imm_b[31]}}
                    : imm_b;
@@ -770,10 +769,10 @@ module cve2_id_stage #(
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
   // =========================================================================
-  // Op classification — drives FSM, forwarding mux, tag derivation
+  // Op classification: drives FSM and 64-bit operand sequencing.
   // =========================================================================
-  // OP/OP_IMM and RV64 word ALU opcodes enter the tagged ALU path. Branches enter only for their
-  // comparison cycle; their target-address ADD remains outside the tagged path.
+  // OP/OP_IMM and RV64 word ALU opcodes enter the RV64 ALU path. Branches enter only for their
+  // comparison cycle; their target-address ADD remains outside that path.
   assign is_lui_op       = (instr_rdata_alu_i[6:0] == OPCODE_LUI);
   assign is_auipc_op     = (instr_rdata_alu_i[6:0] == OPCODE_AUIPC);
   assign is_jump_op      = (instr_rdata_alu_i[6:0] == OPCODE_JAL) ||
@@ -842,7 +841,6 @@ module cve2_id_stage #(
   assign shift_amt_zero         = (shift_amt == 6'h00);
   assign shift_amt_ge32         = shift_amt[5];
   assign shift_amt_lt32_nonzero = !shift_amt_zero && !shift_amt_ge32;
-  assign shift_src_explicit     = 1'b1;
   assign shift_first_save       = shift_is_64 &&
                                   (id_fsm_q == FIRST_CYCLE) &&
                                   !shift_amt_zero &&
@@ -963,27 +961,27 @@ module cve2_id_stage #(
                                     pcadd_upper_cycle ||
                                     addr_upper_cycle;
   // =========================================================================
-  // need_upper: 1 = 2-cycle execution required
+  // needs_upper_cycle: 1 = explicit upper-half execution required.
   // =========================================================================
   always_comb begin
-    need_upper = 1'b0;
+    needs_upper_cycle = 1'b0;
     unique case (op_class)
       OP_CLASS_ADDER: begin
-        need_upper = !is_word_op;
+        needs_upper_cycle = !is_word_op;
       end
       OP_CLASS_BITWISE: begin
-        need_upper = 1'b1;
+        needs_upper_cycle = 1'b1;
       end
       OP_CLASS_COMPARE: begin
-        need_upper = cmp_need_lower_after_upper && !branch_in_dec;
+        needs_upper_cycle = cmp_need_lower_after_upper && !branch_in_dec;
       end
       OP_CLASS_SHIFT: begin
-        need_upper = 1'b0;
+        needs_upper_cycle = 1'b0;
       end
       OP_CLASS_PCADD: begin
-        need_upper = rf_we_dec && (rf_waddr_id_o != 5'd0);
+        needs_upper_cycle = rf_we_dec && (rf_waddr_id_o != 5'd0);
       end
-      default: need_upper = 1'b0;
+      default: needs_upper_cycle = 1'b0;
     endcase
   end
 
@@ -1193,12 +1191,12 @@ module cve2_id_stage #(
                   stall_alu = 1'b1;
                 end
               end else if (op_class == OP_CLASS_PCADD) begin
-                if (need_upper) begin
+                if (needs_upper_cycle) begin
                   id_fsm_d  = PC_UPPER_CYCLE;
                   stall_alu = 1'b1;
                 end
               end else begin
-                if (need_upper) begin
+                if (needs_upper_cycle) begin
                   id_fsm_d  = MULTI_CYCLE;
                   stall_alu = 1'b1;
                 end
@@ -1245,7 +1243,7 @@ module cve2_id_stage #(
         MULTI_CYCLE: begin
             if (op_uses_64_path && (op_class != OP_CLASS_COMPARE)) begin
               if (op_class == OP_CLASS_PCADD) begin
-                if (need_upper) begin
+                if (needs_upper_cycle) begin
                   id_fsm_d   = PC_UPPER_CYCLE;
                   stall_jump = jump_in_dec;
                   stall_alu  = !jump_in_dec;
@@ -1447,7 +1445,7 @@ module cve2_id_stage #(
 
   `ASSERT(IbexMulticycleEnableUnique,
       $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec,
-                (op_uses_64_path && !branch_in_dec && need_upper)}))
+                (op_uses_64_path && !branch_in_dec && needs_upper_cycle)}))
 
   `ASSERT(CVE2DuplicateInstrMatch, instr_valid_i |-> instr_rdata_i === instr_rdata_alu_i)
 
