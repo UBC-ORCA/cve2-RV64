@@ -585,7 +585,8 @@ module cve2_id_stage #(
   always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
     if (!rst_ni) begin
       carry_in_o <= 1'b0;
-    end else if ((((op_class == OP_CLASS_ADDER) || pcadd_lower_cycle) &&
+    end else if (((((op_class == OP_CLASS_ADDER) && (id_fsm_q == FIRST_CYCLE)) ||
+                   pcadd_lower_cycle) &&
                   !is_word_op &&
                   instr_executing_spec) ||
                  addr_capture_lower) begin

@@ -830,6 +830,7 @@ module testbench;
 
 
   localparam logic [31:0] ADD_X3_X1_X2 = 32'h002081b3;
+  localparam logic [31:0] ADD_X4_X5_X6 = 32'h00628233;  // ADD x4, x5, x6
   localparam logic [31:0] SUB_X3_X1_X2 = 32'h402081b3;
   localparam logic [31:0] AND_X3_X1_X2  = 32'h0020f1b3;
   localparam logic [31:0] OR_X3_X1_X2   = 32'h0020e1b3;
@@ -905,6 +906,44 @@ module testbench;
     cycles_taken = 1;
     while (dut_id.id_fsm_q != 2'b00) begin
       cycles_taken++;
+      @(posedge clk_i);
+      #1;
+    end
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_two_instrs_no_gap(input  logic [31:0]  first_encoding,
+                                          input  logic [31:0]  second_encoding,
+                                          output int unsigned  first_cycles,
+                                          output int unsigned  second_cycles);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = first_encoding;
+    instr_rdata_alu_i = first_encoding;
+
+    @(posedge clk_i);
+    #1;
+    first_cycles = 1;
+    while (dut_id.id_fsm_q != 4'd0) begin
+      first_cycles++;
+      @(posedge clk_i);
+      #1;
+    end
+
+    instr_rdata_i     = second_encoding;
+    instr_rdata_alu_i = second_encoding;
+
+    @(posedge clk_i);
+    #1;
+    second_cycles = 1;
+    while (dut_id.id_fsm_q != 4'd0) begin
+      second_cycles++;
       @(posedge clk_i);
       #1;
     end
@@ -1573,6 +1612,7 @@ module testbench;
   logic [63:0] captured_pc_target;
   logic [63:0] captured_load_addr;
   logic [63:0] captured_csr_wdata;
+  int unsigned cycles_second;
 
   initial begin
     // Wait for reset release
@@ -1774,10 +1814,26 @@ module testbench;
                  32'hFFFF_FFFF, 1'b1);
 
     // ==========================================================
+    // Test 16: back-to-back ADD stale carry regression.
+    // The first ADD makes the upper-half add overflow; the next ADD must still
+    // start its lower-half add with carry_in=0.
+    // ==========================================================
+    $display("\n---- Test 16: back-to-back ADD clears upper carry ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
+    write_rf_64(5'd5, 32'h0000_0000, 32'h0000_0010, 2'b10);
+    write_rf_64(5'd6, 32'h0000_0000, 32'h0000_0005, 2'b10);
+    inject_two_instrs_no_gap(ADD_X3_X1_X2, ADD_X4_X5_X6, cycles, cycles_second);
+    check_result("T16A", 5'd3, 32'h0000_0000, 2'b10, 2, cycles,
+                 32'h0000_0000, 1'b1);
+    check_result("T16B", 5'd4, 32'h0000_0015, 2'b10, 2, cycles_second,
+                 32'h0000_0000, 1'b1);
+
+    // ==========================================================
     // Done
     // ==========================================================
     $display("\n==============================");
-    $display("All %0d add tests complete", 15);
+    $display("All %0d add tests complete", 16);
     $display("==============================");
 
 
