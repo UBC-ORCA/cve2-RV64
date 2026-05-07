@@ -852,11 +852,11 @@ module testbench;
   endtask
 
   // --------------------
-  // Write a 32-bit register (lower only, tag 00)
+  // Write a 32-bit register (lower only, inferred-zero upper)
   // --------------------
   task automatic write_rf_32(input logic [4:0]  addr,
                              input logic [31:0] data);
-    write_rf_half(addr, data, 1'b0, 2'b00);
+    write_rf_half(addr, data, 1'b0, 2'b10);
   endtask
 
   task automatic set_pc64(input logic [31:0] lower_val,
@@ -1581,23 +1581,23 @@ module testbench;
     // Pure 32-bit add. Always 1 cycle. Carry ignored.
     // x1=5 (tag 00), x2=3 (tag 00) → x3=8 (tag 00)
     // ==========================================================
-    $display("\n---- Test 1: tag00+tag00, no carry ----");
+    $display("\n---- Test 1: tag10+tag10, no carry ----");
     write_rf_32(5'd1, 32'h0000_0005);
     write_rf_32(5'd2, 32'h0000_0003);
     inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T01", 5'd3, 32'h0000_0008, 2'b00, 1, cycles,
+    check_result("T01", 5'd3, 32'h0000_0008, 2'b10, 1, cycles,
                  32'h0, 1'b0);
 
     // ==========================================================
     // Test 2: tag 00 + tag 00, with carry (overflow ignored)
     // x1=FFFFFFFF (tag 00), x2=1 (tag 00) → x3=0 (tag 00), 1 cycle
     // ==========================================================
-    $display("\n---- Test 2: tag00+tag00, carry ignored ----");
+    $display("\n---- Test 2: tag10+tag10, carry ----");
     write_rf_32(5'd1, 32'hFFFF_FFFF);
     write_rf_32(5'd2, 32'h0000_0001);
     inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T02", 5'd3, 32'h0000_0000, 2'b00, 1, cycles,
-                 32'h0, 1'b0);
+    check_result("T02", 5'd3, 32'h0000_0000, 2'b01, 2, cycles,
+                 32'h0000_0001, 1'b1);
 
     // ==========================================================
     // Test 3: tag 10 + tag 10, no carry → 1 cycle, tag 10
@@ -1780,19 +1780,19 @@ module testbench;
     // ==========================================================
     $display("\n========== SUB tests ==========");
 
-    // SUB-1: tag00-tag00, no borrow. Pure 32-bit subtract, tag 00.
-    $display("\n---- SUB-1: tag00-tag00, no borrow ----");
+    // SUB-1: tag10-tag10, no borrow. Pure 32-bit subtract, inferred-zero upper.
+    $display("\n---- SUB-1: tag10-tag10, no borrow ----");
     write_rf_32(5'd1, 32'h0000_0005);
     write_rf_32(5'd2, 32'h0000_0003);
     inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S01", 5'd3, 32'h0000_0002, 2'b00, 1, cycles, 32'h0, 1'b0);
+    check_result("S01", 5'd3, 32'h0000_0002, 2'b10, 1, cycles, 32'h0, 1'b0);
 
-    // SUB-2: tag00-tag00, borrow ignored for word-sized result.
-    $display("\n---- SUB-2: tag00-tag00, borrow ignored ----");
+    // SUB-2: tag10-tag10, borrow produces inferred all-ones upper.
+    $display("\n---- SUB-2: tag10-tag10, borrow ----");
     write_rf_32(5'd1, 32'h0000_0003);
     write_rf_32(5'd2, 32'h0000_0005);
     inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S02", 5'd3, 32'hFFFF_FFFE, 2'b00, 1, cycles, 32'h0, 1'b0);
+    check_result("S02", 5'd3, 32'hFFFF_FFFE, 2'b11, 1, cycles, 32'h0, 1'b0);
 
     // SUB-3: tag10-tag10, no borrow -> inferred zero upper, 1 cycle.
     $display("\n---- SUB-3: tag10-tag10, no borrow ----");
@@ -1862,12 +1862,12 @@ module testbench;
     // ==========================================================
     $display("\n========== AND tests ==========");
 
-    // AND-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- AND-1: tag00+tag00 ----");
+    // AND-1: tag10+tag10 -> tag 10, 1 cycle
+    $display("\n---- AND-1: tag10+tag10 ----");
     write_rf_32(5'd1, 32'hF0F0_F0F0);
     write_rf_32(5'd2, 32'h0FF0_0FF0);
     inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A01", 5'd3, 32'h00F0_00F0, 2'b00, 1, cycles, 32'h0, 1'b0);
+    check_result("A01", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
 
     // AND-2: tag10+tag10 → tag 10 (0 AND 0 = 0)
     $display("\n---- AND-2: tag10+tag10 ----");
@@ -1932,12 +1932,12 @@ module testbench;
     // ==========================================================
     $display("\n========== OR tests ==========");
 
-    // OR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- OR-1: tag00+tag00 ----");
+    // OR-1: tag10+tag10 -> tag 10, 1 cycle
+    $display("\n---- OR-1: tag10+tag10 ----");
     write_rf_32(5'd1, 32'hF0F0_0000);
     write_rf_32(5'd2, 32'h0000_0F0F);
     inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
+    check_result("O01", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
 
     // OR-2: tag10+tag10 → tag 10 (0 OR 0 = 0)
     $display("\n---- OR-2: tag10+tag10 ----");
@@ -2002,12 +2002,12 @@ module testbench;
     // ==========================================================
     $display("\n========== XOR tests ==========");
 
-    // XOR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- XOR-1: tag00+tag00 ----");
+    // XOR-1: tag10+tag10 -> tag 10, 1 cycle
+    $display("\n---- XOR-1: tag10+tag10 ----");
     write_rf_32(5'd1, 32'hF0F0_0000);
     write_rf_32(5'd2, 32'h0000_0F0F);
     inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
+    check_result("X01", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
 
     // XOR-2: tag10+tag10 → tag 10 (0 XOR 0 = 0)
     $display("\n---- XOR-2: tag10+tag10 ----");

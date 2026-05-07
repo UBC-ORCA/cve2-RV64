@@ -149,6 +149,10 @@ module cve2_controller #(
   logic ecall_insn;
   logic mret_insn;
   logic dret_insn;
+  logic [31:0] pc_id_plus2_lower;
+  logic [63:32] pc_id_plus2_upper;
+  logic        pc_id_plus2_carry;
+  logic [63:0] pc_id_plus2;
   logic wfi_insn;
   logic ebrk_insn;
   logic csr_pipe_flush;
@@ -212,6 +216,11 @@ module cve2_controller #(
 
   // generic special request signal, applies to all instructions
   assign special_req = special_req_pc_change | special_req_flush_only;
+
+  assign {pc_id_plus2_carry, pc_id_plus2_lower} = {1'b0, pc_id_i[31:0]} + 33'd2;
+  assign pc_id_plus2_upper = pc_id_plus2_carry ? (pc_id_i[63:32] + 32'd1) :
+                                                 pc_id_i[63:32];
+  assign pc_id_plus2 = {pc_id_plus2_upper, pc_id_plus2_lower};
 
   // Exception/fault prioritisation is taken from Table 3.7 of Priviledged Spec v1.11
     always_comb begin
@@ -592,7 +601,7 @@ module cve2_controller #(
           unique case (1'b1)
             instr_fetch_err_prio: begin
               exc_cause_o = EXC_CAUSE_INSTR_ACCESS_FAULT;
-              csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 64'd2) : pc_id_i;
+              csr_mtval_o = instr_fetch_err_plus2_i ? pc_id_plus2 : pc_id_i;
             end
             illegal_insn_prio: begin
               exc_cause_o = EXC_CAUSE_ILLEGAL_INSN;

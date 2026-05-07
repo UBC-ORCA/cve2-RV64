@@ -200,7 +200,6 @@ module cve2_id_stage #(
   function automatic logic [31:0] inferred_upper_from_tag(input logic [1:0] tag,
                                                           input logic [31:0] explicit_upper);
     unique case (tag)
-      2'b00,
       2'b10:   inferred_upper_from_tag = 32'h0000_0000;
       2'b11:   inferred_upper_from_tag = 32'hffff_ffff;
       default: inferred_upper_from_tag = explicit_upper;
@@ -285,7 +284,6 @@ module cve2_id_stage #(
   logic        a_explicit, b_explicit;
   logic        a_zero, b_zero;
   logic        a_ones, b_ones;
-  logic        both_00;
   logic        upper_not_inferable;
   logic [31:0] imm_b_eff;
   logic        use_upper_half_operand_a;
@@ -336,8 +334,11 @@ module cve2_id_stage #(
   logic [31:0] addr_lower_q;
   logic        addr_carry_q;
   logic [31:0] addr_src_upper;
-  logic [31:0] addr_imm_upper;
-  logic [31:0] addr_upper_comb;
+  logic        addr_src_upper_explicit;
+  logic        addr_src_upper_ones;
+  logic        addr_imm_upper_ones;
+  logic [31:0] addr_upper_explicit_result;
+  logic [31:0] addr_upper_inferred_result;
   logic [31:0] addr_lower_result;
   logic [31:0] addr_upper_result;
   logic [63:0] addr_result_ex;
@@ -566,7 +567,7 @@ module cve2_id_stage #(
   always_ff @(posedge clk_i or negedge rst_ni) begin : shift_state_reg
     if (!rst_ni) begin
       shift_amt_q     <= 6'h00;
-      shift_src_tag_q <= 2'b00;
+      shift_src_tag_q <= 2'b10;
     end else if (shift_capture) begin
       shift_amt_q     <= shift_amt_now;
       shift_src_tag_q <= r_a_tag_i;
@@ -588,7 +589,7 @@ module cve2_id_stage #(
       csr_src_needs_upper_q  <= 1'b0;
       csr_read_needs_upper_q <= 1'b0;
       csr_src_lower_q        <= 32'h0000_0000;
-      csr_src_tag_q          <= 2'b00;
+      csr_src_tag_q          <= 2'b10;
     end else if (instr_executing_spec && csr_need_upper_cycle) begin
       csr_src_needs_upper_q  <= csr_src_needs_upper;
       csr_read_needs_upper_q <= csr_read_needs_upper;
@@ -598,7 +599,7 @@ module cve2_id_stage #(
       csr_src_needs_upper_q  <= 1'b0;
       csr_read_needs_upper_q <= 1'b0;
       csr_src_lower_q        <= 32'h0000_0000;
-      csr_src_tag_q          <= 2'b00;
+      csr_src_tag_q          <= 2'b10;
     end
   end
 
@@ -607,7 +608,8 @@ module cve2_id_stage #(
   always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
     if (!rst_ni) begin
       carry_in_o <= 1'b0;
-    end else if ((((op_class == OP_CLASS_ADDER) || pcadd_lower_cycle) &&
+    end else if (((((op_class == OP_CLASS_ADDER) && (id_fsm_q == FIRST_CYCLE)) ||
+                   pcadd_lower_cycle) &&
                   !is_word_op &&
                   instr_executing_spec) ||
                  addr_capture_lower) begin
@@ -966,7 +968,6 @@ module cve2_id_stage #(
   always_comb begin
     if (alu_operator == ALU_SUB) begin
       case (tag_b_raw)
-        2'b00,
         2'b10:   tag_b_eff = 2'b11;
         2'b11:   tag_b_eff = 2'b10;
         default: tag_b_eff = tag_b_raw;
@@ -982,12 +983,11 @@ module cve2_id_stage #(
   always_comb begin
     a_explicit          = (tag_a_eff == 2'b01);
     b_explicit          = (tag_b_eff == 2'b01);
-    a_zero              = (tag_a_eff == 2'b00) || (tag_a_eff == 2'b10);
-    b_zero              = (tag_b_eff == 2'b00) || (tag_b_eff == 2'b10);
+    a_zero              = (tag_a_eff == 2'b10);
+    b_zero              = (tag_b_eff == 2'b10);
     a_ones              = (tag_a_eff == 2'b11);
     b_ones              = (tag_b_eff == 2'b11);
-    both_00             = (tag_a_eff == 2'b00) && (tag_b_raw == 2'b00);
-    upper_not_inferable = (a_zero && b_zero && carry_out_i && !both_00) ||
+    upper_not_inferable = (a_zero && b_zero && carry_out_i) ||
                           (a_ones && b_ones && !carry_out_i);
   end
 
@@ -995,8 +995,8 @@ module cve2_id_stage #(
   // Tag-aware compare control
   // =========================================================================
   assign cmp_is_compare       = (op_class == OP_CLASS_COMPARE);
-  assign cmp_a_upper_inferred = (tag_a_eff != 2'b01);
-  assign cmp_b_upper_inferred = (tag_b_raw != 2'b01);
+  assign cmp_a_upper_inferred = tag_a_eff[1];
+  assign cmp_b_upper_inferred = tag_b_raw[1];
   assign cmp_a_upper_ones     = (tag_a_eff == 2'b11);
   assign cmp_b_upper_ones     = (tag_b_raw == 2'b11);
 
@@ -1065,7 +1065,7 @@ module cve2_id_stage #(
   // For 2-cycle results, WB overwrites this from actual upper data.
   // =========================================================================
   always_comb begin
-    w_tag_id_o = 2'b00;
+    w_tag_id_o = 2'b10;
     if ($bits(rf_wd_sel_e)'({rf_wdata_sel}) == RF_WD_CSR) begin
       w_tag_id_o = csr_rdata_tag_i;
     end else if (is_lui_op) begin
@@ -1084,34 +1084,30 @@ module cve2_id_stage #(
     end else begin
       unique case (op_class)
         OP_CLASS_ADDER: begin
-          if      (both_00)                               w_tag_id_o = 2'b00;
-          else if (a_zero && b_zero && !carry_out_i)      w_tag_id_o = 2'b10; // 0+0+0=0
+          if      (a_zero && b_zero && !carry_out_i)      w_tag_id_o = 2'b10; // 0+0+0=0
           else if ((a_ones ^ b_ones) && !carry_out_i)     w_tag_id_o = 2'b11; // 0+FF+0=FF
           else if ((a_ones ^ b_ones) &&  carry_out_i)     w_tag_id_o = 2'b10; // 0+FF+1=00
           else if (a_ones && b_ones && carry_out_i)       w_tag_id_o = 2'b11; // FF+FF+1=FF
-          else                                             w_tag_id_o = 2'b01; // 2-cycle path
+          else                                            w_tag_id_o = 2'b01; // 2-cycle path
         end
         OP_CLASS_BITWISE: begin
           case (alu_operator)
             ALU_AND: begin
-              if      (both_00)                  w_tag_id_o = 2'b00;
-              else if (a_zero || b_zero)         w_tag_id_o = 2'b10;
+              if      (a_zero || b_zero)         w_tag_id_o = 2'b10;
               else if (a_ones && b_ones)         w_tag_id_o = 2'b11;
               else                               w_tag_id_o = 2'b01;
             end
             ALU_OR: begin
-              if      (both_00)                  w_tag_id_o = 2'b00;
-              else if (a_ones || b_ones)         w_tag_id_o = 2'b11;
+              if      (a_ones || b_ones)         w_tag_id_o = 2'b11;
               else if (a_zero && b_zero)         w_tag_id_o = 2'b10;
               else                               w_tag_id_o = 2'b01;
             end
             ALU_XOR: begin
-              if      (both_00)                  w_tag_id_o = 2'b00;
-              else if (a_explicit || b_explicit) w_tag_id_o = 2'b01;
+              if      (a_explicit || b_explicit) w_tag_id_o = 2'b01;
               else if (a_zero == b_zero)         w_tag_id_o = 2'b10; // 0^0 or FF^FF
               else                               w_tag_id_o = 2'b11; // 0^FF
             end
-            default: w_tag_id_o = 2'b00;
+            default: w_tag_id_o = 2'b10;
           endcase
         end
         OP_CLASS_COMPARE: begin
@@ -1124,7 +1120,7 @@ module cve2_id_stage #(
           else if (a_ones && b_ones && carry_out_i)   w_tag_id_o = 2'b11;
           else                                        w_tag_id_o = 2'b01;
         end
-        default: w_tag_id_o = 2'b00;
+        default: w_tag_id_o = 2'b10;
       endcase
     end
   end
@@ -1160,19 +1156,59 @@ module cve2_id_stage #(
   end
 
   always_comb begin
+    addr_src_upper          = 32'h0000_0000;
+    addr_src_upper_explicit = 1'b0;
+    addr_src_upper_ones     = 1'b0;
     unique case (alu_op_a_mux_sel)
-      OP_A_REG_A:  addr_src_upper = inferred_upper_from_tag(r_a_tag_i, rf_rdata_a_i);
-      OP_A_FWD:    addr_src_upper = lsu_addr_last_i[63:32];
-      OP_A_CURRPC: addr_src_upper = pc_id_upper_eff;
-      default:     addr_src_upper = 32'h0000_0000;
+      OP_A_REG_A: begin
+        addr_src_upper          = rf_rdata_a_i;
+        addr_src_upper_explicit = (r_a_tag_i == 2'b01);
+        addr_src_upper_ones     = (r_a_tag_i == 2'b11);
+      end
+      OP_A_FWD: begin
+        addr_src_upper          = lsu_addr_last_i[63:32];
+        addr_src_upper_explicit = 1'b1;
+      end
+      OP_A_CURRPC: begin
+        addr_src_upper          = pc_id_upper_i;
+        addr_src_upper_explicit = (pc_id_tag_i == 2'b01);
+        addr_src_upper_ones     = (pc_id_tag_i == 2'b11);
+      end
+      default: begin
+        addr_src_upper          = 32'h0000_0000;
+        addr_src_upper_explicit = 1'b0;
+        addr_src_upper_ones     = 1'b0;
+      end
     endcase
   end
 
-  assign addr_imm_upper    = {32{imm_b[31]}};
-  assign addr_upper_comb   = addr_src_upper + addr_imm_upper +
-                             {31'h0, (addr_upper_cycle ? addr_carry_q : carry_out_i)};
+  assign addr_imm_upper_ones = imm_b[31];
+
+  always_comb begin
+    unique case ({addr_imm_upper_ones, carry_out_i})
+      2'b01:   addr_upper_explicit_result = addr_src_upper + 32'd1;
+      2'b10:   addr_upper_explicit_result = addr_src_upper - 32'd1;
+      default: addr_upper_explicit_result = addr_src_upper;
+    endcase
+  end
+
+  always_comb begin
+    unique case ({addr_src_upper_ones, addr_imm_upper_ones, carry_out_i})
+      3'b000:  addr_upper_inferred_result = 32'h0000_0000;
+      3'b001:  addr_upper_inferred_result = 32'h0000_0001;
+      3'b010:  addr_upper_inferred_result = 32'hffff_ffff;
+      3'b011:  addr_upper_inferred_result = 32'h0000_0000;
+      3'b100:  addr_upper_inferred_result = 32'hffff_ffff;
+      3'b101:  addr_upper_inferred_result = 32'h0000_0000;
+      3'b110:  addr_upper_inferred_result = 32'hffff_fffe;
+      default: addr_upper_inferred_result = 32'hffff_ffff;
+    endcase
+  end
+
   assign addr_lower_result = addr_upper_cycle ? addr_lower_q : result_ex_i;
-  assign addr_upper_result = addr_upper_cycle ? result_ex_i : addr_upper_comb;
+  assign addr_upper_result = addr_upper_cycle ? result_ex_i :
+                             (addr_src_upper_explicit ? addr_upper_explicit_result :
+                                                        addr_upper_inferred_result);
   assign addr_result_ex    = {addr_upper_result, addr_lower_result};
 
   assign csr_upper_cycle      = (id_fsm_q == CSR_UPPER_CYCLE);
@@ -1511,16 +1547,16 @@ module cve2_id_stage #(
   always_comb begin
     if (use_upper_half_operands) begin
       case (tag_a_eff)
-        2'b00, 2'b10: rf_rdata_a_fwd = 32'h0000_0000;
-        2'b11:        rf_rdata_a_fwd = 32'hFFFF_FFFF;
-        default:      rf_rdata_a_fwd = rf_rdata_a_i;
+        2'b10:   rf_rdata_a_fwd = 32'h0000_0000;
+        2'b11:   rf_rdata_a_fwd = 32'hFFFF_FFFF;
+        default: rf_rdata_a_fwd = rf_rdata_a_i;
       endcase
       // For B, use tag_b_raw (not eff) — forwarding mux delivers the actual
       // register upper; SUB's negation happens inside the ALU's negate path.
       case (tag_b_raw)
-        2'b00, 2'b10: rf_rdata_b_fwd = 32'h0000_0000;
-        2'b11:        rf_rdata_b_fwd = 32'hFFFF_FFFF;
-        default:      rf_rdata_b_fwd = rf_rdata_b_i;
+        2'b10:   rf_rdata_b_fwd = 32'h0000_0000;
+        2'b11:   rf_rdata_b_fwd = 32'hFFFF_FFFF;
+        default: rf_rdata_b_fwd = rf_rdata_b_i;
       endcase
     end else begin
       rf_rdata_a_fwd = rf_rdata_a_i;
@@ -1530,7 +1566,6 @@ module cve2_id_stage #(
 
   always_comb begin
     unique case (r_b_tag_i)
-      2'b00,
       2'b10:   lsu_wdata_upper = 32'h0000_0000;
       2'b11:   lsu_wdata_upper = 32'hffff_ffff;
       default: lsu_wdata_upper = rf_rdata_b_i;

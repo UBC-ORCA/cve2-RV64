@@ -56,8 +56,11 @@ module cve2_fetch_fifo #(
   logic                     aligned_is_compressed, unaligned_is_compressed;
 
   logic                     addr_incr_two;
-  logic [63:1]              instr_addr_next;
-  logic [63:1]              instr_addr_d, instr_addr_q;
+  logic [31:1]              instr_addr_lower_next;
+  logic [31:1]              instr_addr_lower_d, instr_addr_lower_q;
+  logic [63:32]             instr_addr_upper_next;
+  logic [63:32]             instr_addr_upper_d, instr_addr_upper_q;
+  logic                     instr_addr_lower_carry;
   logic                     instr_addr_en;
   logic                     unused_addr_in;
 
@@ -139,26 +142,32 @@ module cve2_fetch_fifo #(
   assign instr_addr_en = clear_i | (out_ready_i & out_valid_o);
 
   // Increment the address by two every time a compressed instruction is popped
-  assign addr_incr_two = instr_addr_q[1] ? unaligned_is_compressed :
-                                           aligned_is_compressed;
+  assign addr_incr_two = instr_addr_lower_q[1] ? unaligned_is_compressed :
+                                                   aligned_is_compressed;
 
-  assign instr_addr_next = (instr_addr_q[63:1] +
-                            // Increment address by 4 or 2
-                            {61'd0,~addr_incr_two,addr_incr_two});
+  assign {instr_addr_lower_carry, instr_addr_lower_next} =
+      {1'b0, instr_addr_lower_q} +
+      // Increment address by 4 or 2, in halfword units.
+      {30'd0, ~addr_incr_two, addr_incr_two};
 
-  assign instr_addr_d = clear_i ? in_addr_i[63:1] :
-                                  instr_addr_next;
+  assign instr_addr_upper_next = instr_addr_lower_carry ? (instr_addr_upper_q + 32'd1) :
+                                                          instr_addr_upper_q;
+
+  assign instr_addr_lower_d = clear_i ? in_addr_i[31:1]  : instr_addr_lower_next;
+  assign instr_addr_upper_d = clear_i ? in_addr_i[63:32] : instr_addr_upper_next;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      instr_addr_q <= '0;
+      instr_addr_lower_q <= '0;
+      instr_addr_upper_q <= '0;
     end else if (instr_addr_en) begin
-      instr_addr_q <= instr_addr_d;
+      instr_addr_lower_q <= instr_addr_lower_d;
+      instr_addr_upper_q <= instr_addr_upper_d;
     end
   end
 
   // Output PC of current instruction
-  assign out_addr_o      = {instr_addr_q, 1'b0};
+  assign out_addr_o      = {instr_addr_upper_q, instr_addr_lower_q, 1'b0};
 
   // The LSB of the address is unused, since all addresses are halfword aligned
   assign unused_addr_in = in_addr_i[0];
