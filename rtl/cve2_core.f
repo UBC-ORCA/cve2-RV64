@@ -10,6 +10,7 @@ cve2_ex_block.sv
 cve2_id_stage.sv
 cve2_if_stage.sv
 cve2_load_store_unit.sv
+cve2_wb.sv
 cve2_multdiv_slow.sv
 cve2_multdiv_fast.sv
 cve2_prefetch_buffer.sv
