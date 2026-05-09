@@ -167,7 +167,7 @@ module cve2_core import cve2_pkg::*; #(
 
   // Jump and branch target and decision (EX->IF)
   logic [63:0] pc_target_ex;
-  logic [31:0] branch_target_ex_unused;
+  logic [63:0] branch_target_ex_unused;
   logic        branch_decision;
   logic        alu_is_equal_result;
 
@@ -178,35 +178,36 @@ module cve2_core import cve2_pkg::*; #(
 
   // Register File
   logic [4:0]  rf_raddr_a;
-  logic [31:0] rf_rdata_a;
+  logic [63:0] rf_rdata_a;
   logic        rf_r_upper_a;
   logic [4:0]  rf_raddr_b;
-  logic [31:0] rf_rdata_b;
+  logic [63:0] rf_rdata_b;
   logic        rf_r_upper_b;
   logic        rf_ren_a;
   logic        rf_ren_b;
   logic [4:0]  rf_waddr_wb;
-  logic [31:0] rf_wdata_wb;
+  logic [63:0] rf_wdata_wb;
   logic        rf_w_upper_wb;
   logic        rf_w_upper_id;
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
-  logic [31:0] rf_wdata_lsu;
+  logic [63:0] rf_wdata_lsu;
   logic        rf_wdata_lsu_upper;
   logic        rf_we_wb;
   logic        rf_we_lsu;
 
   logic [4:0]  rf_waddr_id;
-  logic [31:0] rf_wdata_id;
+  logic [63:0] rf_wdata_id;
   logic        rf_we_id;
 
   // ALU Control
   alu_op_e     alu_operator_ex;
-  logic [31:0] alu_operand_a_ex;
-  logic [31:0] alu_operand_b_ex;
+  logic [63:0] alu_operand_a_ex;
+  logic [63:0] alu_operand_b_ex;
+  logic        alu_word_op_ex;
 
-  logic [31:0] alu_adder_result_ex;    // Used to forward computed address to LSU
-  logic [31:0] result_ex;
+  logic [63:0] alu_adder_result_ex;    // Used to forward computed address to LSU
+  logic [63:0] result_ex;
 
   logic        carry_in;
   logic        carry_out;
@@ -241,7 +242,7 @@ module cve2_core import cve2_pkg::*; #(
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
   logic        lsu_req;
-  logic [31:0] lsu_wdata;
+  logic [63:0] lsu_wdata;
 
   // stall control
   logic        id_in_ready;
@@ -445,6 +446,7 @@ module cve2_core import cve2_pkg::*; #(
     .alu_operator_ex_o (alu_operator_ex),
     .alu_operand_a_ex_o(alu_operand_a_ex),
     .alu_operand_b_ex_o(alu_operand_b_ex),
+    .alu_word_op_ex_o  (alu_word_op_ex),
 
     .imd_val_q_ex_o (imd_val_q_ex),
     .imd_val_d_ex_i (imd_val_d_ex),
@@ -577,6 +579,7 @@ module cve2_core import cve2_pkg::*; #(
     .alu_operand_a_i        (alu_operand_a_ex),
     .alu_operand_b_i        (alu_operand_b_ex),
     .alu_instr_first_cycle_i(instr_first_cycle_id),
+    .alu_word_op_i          (alu_word_op_ex),
 
     // Multipler/Divider signal from ID stage
     .multdiv_operator_i   (multdiv_operator_ex),
@@ -736,8 +739,8 @@ module cve2_core import cve2_pkg::*; #(
   ////////////////////////
   cve2_register_file_ff #(
     .RV32E            (RV32E),
-    .DataWidth        (32),
-    .WordZeroVal      (32'h0)
+    .DataWidth        (64),
+    .WordZeroVal      (64'h0)
   ) register_file_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),

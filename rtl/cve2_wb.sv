@@ -26,15 +26,15 @@ module cve2_wb #(
   output logic                     perf_instr_ret_compressed_wb_o,
 
   input  logic [4:0]               rf_waddr_id_i,
-  input  logic [31:0]              rf_wdata_id_i,
+  input  logic [63:0]              rf_wdata_id_i,
   input  logic                     rf_we_id_i,                  
 
-  input  logic [31:0]              rf_wdata_lsu_i,
+  input  logic [63:0]              rf_wdata_lsu_i,
   input  logic                     rf_we_lsu_i,
   input  logic                     rf_wdata_lsu_upper_i,
 
   output logic [4:0]               rf_waddr_wb_o,
-  output logic [31:0]              rf_wdata_wb_o,
+  output logic [63:0]              rf_wdata_wb_o,
   output logic                     rf_we_wb_o,
 
   input logic                      lsu_resp_valid_i,
@@ -48,7 +48,7 @@ module cve2_wb #(
 
   // 0 == RF write from ID
   // 1 == RF write from LSU
-  logic [31:0] rf_wdata_wb_mux    [2];
+  logic [63:0] rf_wdata_wb_mux    [2];
   logic [1:0]  rf_wdata_wb_mux_we;
 
     // without writeback stage just pass through register write signals
@@ -66,8 +66,8 @@ module cve2_wb #(
 
   // RF write data can come from ID results (all RF writes that aren't because of loads will come
   // from here) or the LSU (RF writes for load data)
-  assign rf_wdata_wb_o = ({32{rf_wdata_wb_mux_we[0]}} & rf_wdata_wb_mux[0]) |
-                         ({32{rf_wdata_wb_mux_we[1]}} & rf_wdata_wb_mux[1]);
+  assign rf_wdata_wb_o = ({64{rf_wdata_wb_mux_we[0]}} & rf_wdata_wb_mux[0]) |
+                         ({64{rf_wdata_wb_mux_we[1]}} & rf_wdata_wb_mux[1]);
   assign rf_we_wb_o    = |rf_wdata_wb_mux_we;
 
   assign w_upper_o = rf_we_lsu_i ? rf_wdata_lsu_upper_i : w_upper_i;

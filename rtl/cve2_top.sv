@@ -30,7 +30,7 @@ module cve2_top import cve2_pkg::*; #(
   input  prim_ram_1p_pkg::ram_1p_cfg_t ram_cfg_i,
 
   input  logic [31:0]                  hart_id_i,
-  input  logic [31:0]                  boot_addr_i,
+  input  logic [63:0]                  boot_addr_i,
 
   // Instruction memory interface
   output logic                         instr_req_o,
@@ -80,8 +80,8 @@ module cve2_top import cve2_pkg::*; #(
   // Debug Interface
   input  logic                         debug_req_i,
   output logic                         debug_halted_o,
-  input  logic [31:0]                  dm_halt_addr_i,
-  input  logic [31:0]                  dm_exception_addr_i,
+  input  logic [63:0]                  dm_halt_addr_i,
+  input  logic [63:0]                  dm_exception_addr_i,
   output crash_dump_t                  crash_dump_o,
 
   // RISC-V Formal Interface

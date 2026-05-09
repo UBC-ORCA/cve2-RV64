@@ -1,20 +1,16 @@
 `timescale 1ns/1ps
 
 module testbench;
-
   import cve2_pkg::*;
 
-  localparam bit EnableCSRs = 1'b0;
+  localparam logic [31:0] NOP = 32'h0000_0013;
 
-  // --------------------
-  // clk / reset
-  // --------------------
   logic clk_i;
   logic rst_ni;
 
   initial begin
     clk_i = 1'b0;
-    forever #5 clk_i = ~clk_i; // 100 MHz
+    forever #5 clk_i = ~clk_i;
   end
 
   initial begin
@@ -23,351 +19,156 @@ module testbench;
     rst_ni = 1'b1;
   end
 
-  // --------------------
-  // Core enable
-  // --------------------
   logic fetch_enable_i;
-  initial fetch_enable_i = 1'b1;
+  assign fetch_enable_i = 1'b1;
 
-  // --------------------
-  // IF->ID instruction interface
-  // --------------------
   logic        instr_valid_i;
   logic [31:0] instr_rdata_i;
   logic [31:0] instr_rdata_alu_i;
   logic [15:0] instr_rdata_c_i;
   logic        instr_is_compressed_i;
 
-  initial begin
-    instr_valid_i         = 1'b0;
-    instr_rdata_i         = 32'h0000_0013; // NOP (ADDI x0,x0,0)
-    instr_rdata_alu_i     = 32'h0000_0013;
-    instr_rdata_c_i       = 16'h0001;
-    instr_is_compressed_i = 1'b0;
-  end
+  logic [31:0] pc_id_i;
+  logic [31:0] pc_id_upper_i;
+
+  logic        branch_decision;
+  logic        alu_is_equal_result;
+  logic        pc_set_o;
+  pc_sel_e     pc_mux_o;
+  exc_pc_sel_e exc_pc_mux_o;
+  exc_cause_e  exc_cause_o;
+  logic        illegal_insn_o;
 
   logic instr_req_o;
   logic instr_first_cycle_id_o;
   logic instr_valid_clear_o;
   logic id_in_ready_o;
+  logic instr_id_done_o;
 
-  // --------------------
-  // IF/ID PC
-  // --------------------
-  logic [31:0] pc_id_i;
-  logic [31:0] pc_id_upper_i;
-  initial begin
-    pc_id_i       = 32'h0000_0000;
-    pc_id_upper_i = 32'h0000_0000;
-  end
+  alu_op_e     alu_operator_ex;
+  logic [63:0] alu_operand_a_ex;
+  logic [63:0] alu_operand_b_ex;
+  logic        alu_word_op_ex;
 
-  // --------------------
-  // Branch decision feedback (EX->ID)
-  // --------------------
-  logic branch_decision_i;
-  logic branch_decision_o;
-  logic alu_is_equal_result_o;
-  assign branch_decision_i = branch_decision_o;
-
-  // --------------------
-  // ID control outputs
-  // --------------------
-  logic              pc_set_o;
-  pc_sel_e           pc_mux_o;
-  exc_pc_sel_e       exc_pc_mux_o;
-  exc_cause_e        exc_cause_o;
-  logic              illegal_insn_o;
-
-  // --------------------
-  // Error/illegal inputs
-  // --------------------
-  logic illegal_c_insn_i;
-  logic instr_fetch_err_i;
-  logic instr_fetch_err_plus2_i;
-  logic illegal_csr_insn_i;
-
-  initial begin
-    illegal_c_insn_i          = 1'b0;
-    instr_fetch_err_i         = 1'b0;
-    instr_fetch_err_plus2_i   = 1'b0;
-    illegal_csr_insn_i        = 1'b0;
-  end
-
-  // --------------------
-  // Stall inputs to ID
-  // --------------------
-  logic ex_valid_i;
-  logic lsu_resp_valid_i;
-
-  // --------------------
-  // ALU signals ID->EX
-  // --------------------
-  alu_op_e     alu_operator_ex_o;
-  logic [31:0] alu_operand_a_ex_o;
-  logic [31:0] alu_operand_b_ex_o;
-
-  // --------------------
-  // Multicycle intermediate reg between EX and ID
-  // --------------------
   logic [1:0]  imd_val_we_ex;
   logic [33:0] imd_val_d_ex[2];
   logic [33:0] imd_val_q_ex[2];
+  logic        carry_in;
+  logic        carry_out;
 
-  // --------------------
-  // Carry plumbing between EX and ID
-  // --------------------
-  logic carry_in;
-  logic carry_out;
+  logic        mult_en_ex;
+  logic        div_en_ex;
+  logic        mult_sel_ex;
+  logic        div_sel_ex;
+  md_op_e      multdiv_operator_ex;
+  logic [1:0]  multdiv_signed_mode_ex;
+  logic [31:0] multdiv_operand_a_ex;
+  logic [31:0] multdiv_operand_b_ex;
 
-  // --------------------
-  // Mult/Div signals ID->EX
-  // --------------------
-  logic         mult_en_ex_o, div_en_ex_o;
-  logic         mult_sel_ex_o, div_sel_ex_o;
-  md_op_e       multdiv_operator_ex_o;
-  logic [1:0]   multdiv_signed_mode_ex_o;
-  logic [31:0]  multdiv_operand_a_ex_o, multdiv_operand_b_ex_o;
+  logic        csr_access_o;
+  csr_op_e     csr_op_o;
+  logic        csr_op_en_o;
+  logic        csr_save_if_o;
+  logic        csr_save_id_o;
+  logic        csr_restore_mret_id_o;
+  logic        csr_restore_dret_id_o;
+  logic        csr_save_cause_o;
+  logic [63:0] csr_mtval_o;
+  logic [31:0] csr_wdata_o;
+  logic        csr_wdata_upper_o;
+  logic        csr_wdata_capture_o;
+  logic        csr_rdata_upper_o;
+  logic        csr_rdata_capture_o;
 
-  // --------------------
-  // CSR signals
-  // --------------------
-  logic          csr_access_o;
-  csr_op_e       csr_op_o;
-  logic          csr_op_en_o;
-  logic          csr_save_if_o, csr_save_id_o;
-  logic          csr_restore_mret_id_o, csr_restore_dret_id_o;
-  logic          csr_save_cause_o;
-  logic [63:0]   csr_mtval_o;
-  logic [31:0]   csr_wdata_o;
-  logic          csr_wdata_upper_o;
-  logic          csr_wdata_capture_o;
-  logic          csr_rdata_upper_o;
-  logic          csr_rdata_capture_o;
-  priv_lvl_e     priv_mode_i;
-  logic          csr_mstatus_tw_i;
-  logic [63:0]   csr_rdata_full_i;
-  logic [31:0]   csr_rdata_i;
-
-  initial begin
-    priv_mode_i       = PRIV_LVL_M;
-    csr_mstatus_tw_i  = 1'b0;
-    csr_rdata_full_i  = 64'h0;
-  end
-
-  function automatic logic [31:0] tb_expected_upper_from_code(input logic [1:0] upper_code);
-    unique case (upper_code)
-      2'b11:   tb_expected_upper_from_code = 32'hffff_ffff;
-      default: tb_expected_upper_from_code = 32'h0000_0000;
-    endcase
-  endfunction
-
-  assign csr_rdata_i     = csr_rdata_upper_o ? csr_rdata_full_i[63:32] :
-                                                csr_rdata_full_i[31:0];
-
-  // Standalone CSR-file harness for mechanism 7 storage/path checks.
-  logic        csr64_access_i;
-  csr_num_e    csr64_addr_i;
-  logic [31:0] csr64_wdata_i;
-  logic        csr64_wdata_upper_i;
-  logic        csr64_wdata_capture_i;
-  csr_op_e     csr64_op_i;
-  logic        csr64_op_en_i;
-  logic [31:0] csr64_rdata_o;
-  logic        csr64_rdata_upper_i;
-  logic        csr64_rdata_capture_i;
-  logic [63:0] csr64_mepc_o;
-  logic [63:0] csr64_depc_o;
-  logic [63:0] csr64_mtvec_o;
-  logic        csr64_mtvec_init_i;
-  logic [63:0] csr64_pc_if_i;
-  logic [63:0] csr64_pc_id_i;
-  logic        csr64_save_if_i;
-  logic        csr64_save_id_i;
-  logic        csr64_restore_mret_i;
-  logic        csr64_restore_dret_i;
-  logic        csr64_save_cause_i;
-  exc_cause_e  csr64_mcause_i;
-  logic [63:0] csr64_mtval_i;
-  logic        csr64_illegal_o;
-  priv_lvl_e   csr64_priv_mode_id_o;
-  priv_lvl_e   csr64_priv_mode_lsu_o;
-  logic        csr64_mstatus_tw_o;
-  logic        csr64_irq_pending_o;
-  irqs_t       csr64_irqs_o;
-  logic        csr64_mstatus_mie_o;
-  pmp_cfg_t    csr64_pmp_cfg_o [4];
-  logic [33:0] csr64_pmp_addr_o[4];
-  pmp_mseccfg_t csr64_pmp_mseccfg_o;
-  logic        csr64_debug_single_step_o;
-  logic        csr64_debug_ebreakm_o;
-  logic        csr64_debug_ebreaku_o;
-  logic        csr64_trigger_match_o;
-
-  initial begin
-    csr64_access_i       = 1'b0;
-    csr64_addr_i         = CSR_MSCRATCH;
-    csr64_wdata_i        = 32'h0;
-    csr64_wdata_upper_i  = 1'b0;
-    csr64_wdata_capture_i = 1'b0;
-    csr64_op_i           = CSR_OP_READ;
-    csr64_op_en_i        = 1'b0;
-    csr64_rdata_upper_i  = 1'b0;
-    csr64_rdata_capture_i = 1'b0;
-    csr64_mtvec_init_i   = 1'b0;
-    csr64_pc_if_i        = 64'h0;
-    csr64_pc_id_i        = 64'h0;
-    csr64_save_if_i      = 1'b0;
-    csr64_save_id_i      = 1'b0;
-    csr64_restore_mret_i = 1'b0;
-    csr64_restore_dret_i = 1'b0;
-    csr64_save_cause_i   = 1'b0;
-    csr64_mcause_i       = EXC_CAUSE_INSN_ADDR_MISA;
-    csr64_mtval_i        = 64'h0;
-  end
-
-  // --------------------
-  // LSU interface
-  // --------------------
   logic        lsu_req_o;
   logic        lsu_we_o;
   logic [1:0]  lsu_type_o;
   logic        lsu_sign_ext_o;
-  logic [31:0] lsu_wdata_o;
+  logic [63:0] lsu_wdata_o;
+  logic        lsu_addr_incr_req;
+  logic [63:0] lsu_addr_last;
+  logic [63:0] lsu_addr_ex;
+  logic [63:0] pc_target_ex;
+  logic        lsu_resp_valid;
+  logic        lsu_load_err;
+  logic        lsu_store_err;
+  logic        lsu_busy;
 
-  logic        lsu_addr_incr_req_i;
-  logic [63:0] lsu_addr_last_i;
-  logic        lsu_load_err_i, lsu_store_err_i;
+  logic        data_req;
+  logic        data_gnt;
+  logic        data_rvalid;
+  logic        data_err;
+  logic        data_pmp_err;
+  logic [63:0] data_addr;
+  logic        data_we;
+  logic [3:0]  data_be;
+  logic [31:0] data_wdata;
+  logic [31:0] data_rdata;
 
-  logic        data_req_o;
-  logic        data_gnt_i;
-  logic        data_rvalid_i;
-  logic        data_err_i;
-  logic        data_pmp_err_i;
-  logic [63:0] data_addr_o;
-  logic        data_we_o;
-  logic [3:0]  data_be_o;
-  logic [31:0] data_wdata_o;
-  logic [31:0] data_rdata_i;
+  logic [63:0] result_ex;
+  logic [63:0] alu_adder_result_ex;
+  logic [63:0] branch_target_unused;
+  logic        ex_valid;
 
-  initial begin
-    data_rvalid_i  = 1'b0;
-    data_err_i     = 1'b0;
-    data_pmp_err_i = 1'b0;
-    data_rdata_i   = 32'h0;
-  end
+  logic [4:0]  rf_raddr_a;
+  logic [63:0] rf_rdata_a;
+  logic [4:0]  rf_raddr_b;
+  logic [63:0] rf_rdata_b;
+  logic        rf_ren_a;
+  logic        rf_ren_b;
+  logic [4:0]  rf_waddr_id;
+  logic [63:0] rf_wdata_id;
+  logic        rf_we_id;
+  logic        rf_w_upper_id;
 
-  assign data_gnt_i = 1'b1;
+  logic [4:0]  rf_waddr_wb;
+  logic [63:0] rf_wdata_wb;
+  logic        rf_we_wb;
+  logic        rf_w_upper_wb;
+  logic [63:0] rf_wdata_lsu;
+  logic        rf_we_lsu;
+  logic        rf_wdata_lsu_upper;
+  logic        en_wb;
 
-  // --------------------
-  // X-Interface (disabled)
-  // --------------------
-  logic [31:0] hart_id_i;
-  logic        x_issue_valid_o;
-  logic        x_issue_ready_i;
-  x_issue_req_t  x_issue_req_o;
-  x_issue_resp_t x_issue_resp_i;
+  logic        preload_we;
+  logic [4:0]  preload_waddr;
+  logic [63:0] preload_wdata;
+  logic [4:0]  rf_waddr_mux;
+  logic [63:0] rf_wdata_mux;
+  logic        rf_we_mux;
 
-  x_register_t x_register_o;
-  logic        r_a_upper_o, r_b_upper_o;
-  logic [63:0] lsu_addr_ex_o;
-  logic [63:0] pc_target_ex_o;
+  logic [31:0] data_mem [0:255];
+  logic        data_rvalid_next;
+  logic [31:0] data_rdata_next;
+  logic        last_pc_set;
+  logic [63:0] last_pc_target;
 
-  logic        x_commit_valid_o;
-  x_commit_t   x_commit_o;
+  int errors;
 
-  logic        x_result_valid_i;
-  logic        x_result_ready_o;
-  x_result_t   x_result_i;
+  assign instr_rdata_alu_i     = instr_rdata_i;
+  assign instr_rdata_c_i       = instr_rdata_i[15:0];
+  assign instr_is_compressed_i = 1'b0;
 
-  initial begin
-    hart_id_i        = 32'h0;
-    x_issue_ready_i  = 1'b0;
-    x_issue_resp_i   = '0;
-    x_result_valid_i = 1'b0;
-    x_result_i       = '0;
-  end
+  assign data_gnt     = 1'b1;
+  assign data_err     = 1'b0;
+  assign data_pmp_err = 1'b0;
 
-  // --------------------
-  // IRQ/debug
-  // --------------------
-  logic        csr_mstatus_mie_i;
-  logic        irq_pending_i;
-  irqs_t       irqs_i;
-  logic        irq_nm_i;
-  logic        nmi_mode_o;
+  assign rf_waddr_mux = preload_we ? preload_waddr : rf_waddr_wb;
+  assign rf_wdata_mux = preload_we ? preload_wdata : rf_wdata_wb;
+  assign rf_we_mux    = preload_we | rf_we_wb;
 
-  logic        debug_mode_o;
-  dbg_cause_e  debug_cause_o;
-  logic        debug_csr_save_o;
-  logic        debug_req_i;
-  logic        debug_single_step_i;
-  logic        debug_ebreakm_i;
-  logic        debug_ebreaku_i;
-  logic        trigger_match_i;
-
-  initial begin
-    csr_mstatus_mie_i   = 1'b0;
-    irq_pending_i       = 1'b0;
-    irqs_i              = '0;
-    irq_nm_i            = 1'b0;
-    debug_req_i         = 1'b0;
-    debug_single_step_i = 1'b0;
-    debug_ebreakm_i     = 1'b0;
-    debug_ebreaku_i     = 1'b0;
-    trigger_match_i     = 1'b0;
-  end
-
-  // --------------------
-  // ID writeback interface
-  // --------------------
-  logic [31:0] result_ex_i;
-  logic [4:0]  rf_raddr_a_o, rf_raddr_b_o;
-  logic [31:0] rf_rdata_a_i, rf_rdata_b_i;
-  logic        rf_ren_a_o, rf_ren_b_o;
-
-  logic [4:0]  rf_waddr_id_o;
-  logic [31:0] rf_wdata_id_o;
-  logic        rf_we_id_o;
-  logic        rf_w_upper_id_o;
-
-  logic en_wb_o;
-  logic instr_perf_count_id_o;
-
-  // Perf outputs
-  logic perf_jump_o, perf_branch_o, perf_tbranch_o;
-  logic perf_dside_wait_o, perf_wfi_wait_o, perf_div_wait_o;
-  logic instr_id_done_o;
-
-  // --------------------
-  // WB outputs to RF
-  // --------------------
-  logic [4:0]  rf_waddr_wb_o;
-  logic [31:0] rf_wdata_wb_o;
-  logic        rf_we_wb_o;
-  logic        rf_w_upper_wb_o;
-
-  // LSU writeback path
-  logic [31:0] rf_wdata_lsu_i;
-  logic        rf_wdata_lsu_upper_i;
-  logic        rf_we_lsu_i;
-
-  // --------------------
-  // Instantiate ID
-  // --------------------
   cve2_id_stage #(
-    .RV32E      (1'b0),
-    .RV32M      (RV32MFast),
-    .RV32B      (RV32BNone),
-    .XInterface (1'b0),
-    .EnableCSRs (EnableCSRs)
+    .RV32E     (1'b0),
+    .RV32M     (RV32MNone),
+    .RV32B     (RV32BNone),
+    .XInterface(1'b0),
+    .EnableCSRs(1'b0)
   ) dut_id (
     .clk_i,
     .rst_ni,
-
     .fetch_enable_i,
     .ctrl_busy_o(),
     .illegal_insn_o,
-
     .instr_valid_i,
     .instr_rdata_i,
     .instr_rdata_alu_i,
@@ -377,45 +178,36 @@ module testbench;
     .instr_first_cycle_id_o,
     .instr_valid_clear_o,
     .id_in_ready_o,
-
-    .branch_decision_i,
-    .alu_is_equal_result_i(alu_is_equal_result_o),
-
+    .branch_decision_i(branch_decision),
+    .alu_is_equal_result_i(alu_is_equal_result),
     .pc_set_o,
     .pc_mux_o,
     .exc_pc_mux_o,
     .exc_cause_o,
-
-    .illegal_c_insn_i,
-    .instr_fetch_err_i,
-    .instr_fetch_err_plus2_i,
-
+    .illegal_c_insn_i(1'b0),
+    .instr_fetch_err_i(1'b0),
+    .instr_fetch_err_plus2_i(1'b0),
     .pc_id_i,
     .pc_id_upper_i,
-
-    .ex_valid_i,
-    .lsu_resp_valid_i,
-
-    .alu_operator_ex_o,
-    .alu_operand_a_ex_o,
-    .alu_operand_b_ex_o,
-
+    .ex_valid_i(ex_valid),
+    .lsu_resp_valid_i(lsu_resp_valid),
+    .alu_operator_ex_o(alu_operator_ex),
+    .alu_operand_a_ex_o(alu_operand_a_ex),
+    .alu_operand_b_ex_o(alu_operand_b_ex),
+    .alu_word_op_ex_o(alu_word_op_ex),
     .imd_val_we_ex_i(imd_val_we_ex),
-    .imd_val_d_ex_i (imd_val_d_ex),
-    .imd_val_q_ex_o (imd_val_q_ex),
-
+    .imd_val_d_ex_i(imd_val_d_ex),
+    .imd_val_q_ex_o(imd_val_q_ex),
     .carry_out_i(carry_out),
-    .carry_in_o (carry_in),
-
-    .mult_en_ex_o,
-    .div_en_ex_o,
-    .mult_sel_ex_o,
-    .div_sel_ex_o,
-    .multdiv_operator_ex_o,
-    .multdiv_signed_mode_ex_o,
-    .multdiv_operand_a_ex_o,
-    .multdiv_operand_b_ex_o,
-
+    .carry_in_o(carry_in),
+    .mult_en_ex_o(mult_en_ex),
+    .div_en_ex_o(div_en_ex),
+    .mult_sel_ex_o(mult_sel_ex),
+    .div_sel_ex_o(div_sel_ex),
+    .multdiv_operator_ex_o(multdiv_operator_ex),
+    .multdiv_signed_mode_ex_o(multdiv_signed_mode_ex),
+    .multdiv_operand_a_ex_o(multdiv_operand_a_ex),
+    .multdiv_operand_b_ex_o(multdiv_operand_b_ex),
     .csr_access_o,
     .csr_op_o,
     .csr_op_en_o,
@@ -430,2392 +222,462 @@ module testbench;
     .csr_wdata_capture_o,
     .csr_rdata_upper_o,
     .csr_rdata_capture_o,
-    .priv_mode_i,
-    .csr_mstatus_tw_i,
-    .illegal_csr_insn_i,
-
+    .priv_mode_i(PRIV_LVL_M),
+    .csr_mstatus_tw_i(1'b0),
+    .illegal_csr_insn_i(1'b0),
     .lsu_req_o,
     .lsu_we_o,
     .lsu_type_o,
     .lsu_sign_ext_o,
     .lsu_wdata_o,
-
-    .lsu_addr_incr_req_i,
-    .lsu_addr_last_i,
-
-    .hart_id_i,
-    .x_issue_valid_o,
-    .x_issue_ready_i,
-    .x_issue_req_o,
-    .x_issue_resp_i,
-
-    .x_register_o,
-    .r_a_upper_o,
-    .r_b_upper_o,
-
-    .x_commit_valid_o,
-    .x_commit_o,
-
-    .x_result_valid_i,
-    .x_result_ready_o,
-    .x_result_i,
-
-    .csr_mstatus_mie_i,
-    .irq_pending_i,
-    .irqs_i,
-    .irq_nm_i,
-    .nmi_mode_o,
-
-    .lsu_load_err_i,
-    .lsu_store_err_i,
-
-    .debug_mode_o,
-    .debug_cause_o,
-    .debug_csr_save_o,
-    .debug_req_i,
-    .debug_single_step_i,
-    .debug_ebreakm_i,
-    .debug_ebreaku_i,
-    .trigger_match_i,
-
-    .result_ex_i(result_ex_i),
-    .csr_rdata_i,
-
-    .rf_raddr_a_o,
-    .rf_rdata_a_i,
-    .rf_raddr_b_o,
-    .rf_rdata_b_i,
-    .rf_ren_a_o,
-    .rf_ren_b_o,
-
-    .rf_waddr_id_o,
-    .rf_wdata_id_o,
-    .rf_we_id_o,
-    .rf_w_upper_id_o,
-    .lsu_addr_ex_o,
-    .pc_target_ex_o,
-
-    .en_wb_o,
-    .instr_perf_count_id_o,
-
-    .perf_jump_o,
-    .perf_branch_o,
-    .perf_tbranch_o,
-    .perf_dside_wait_o,
-    .perf_wfi_wait_o,
-    .perf_div_wait_o,
-    .instr_id_done_o
-  );
-
-  // --------------------
-  // Instantiate CSR file
-  // --------------------
-  cve2_cs_registers #(
-    .PMPEnable(1'b0),
-    .RV32E    (1'b0),
-    .RV32M    (RV32MFast),
-    .RV32B    (RV32BNone)
-  ) dut_csrs64 (
-    .clk_i,
-    .rst_ni,
-
+    .lsu_addr_incr_req_i(lsu_addr_incr_req),
+    .lsu_addr_last_i(lsu_addr_last),
     .hart_id_i(32'h0),
-
-    .priv_mode_id_o (csr64_priv_mode_id_o),
-    .priv_mode_lsu_o(csr64_priv_mode_lsu_o),
-    .csr_mstatus_tw_o(csr64_mstatus_tw_o),
-
-    .csr_mtvec_o     (csr64_mtvec_o),
-    .csr_mtvec_init_i(csr64_mtvec_init_i),
-    .boot_addr_i     (64'h0000_0000_0000_0080),
-
-    .csr_access_i(csr64_access_i),
-    .csr_addr_i  (csr64_addr_i),
-    .csr_wdata_i        (csr64_wdata_i),
-    .csr_wdata_upper_i  (csr64_wdata_upper_i),
-    .csr_wdata_capture_i(csr64_wdata_capture_i),
-    .csr_op_i    (csr64_op_i),
-    .csr_op_en_i (csr64_op_en_i),
-    .csr_rdata_o        (csr64_rdata_o),
-    .csr_rdata_upper_i  (csr64_rdata_upper_i),
-    .csr_rdata_capture_i(csr64_rdata_capture_i),
-
-    .irq_software_i(1'b0),
-    .irq_timer_i   (1'b0),
-    .irq_external_i(1'b0),
-    .irq_fast_i    (16'h0000),
-    .nmi_mode_i    (1'b0),
-    .irq_pending_o (csr64_irq_pending_o),
-    .irqs_o        (csr64_irqs_o),
-    .csr_mstatus_mie_o(csr64_mstatus_mie_o),
-    .csr_mepc_o        (csr64_mepc_o),
-
-    .csr_pmp_cfg_o    (csr64_pmp_cfg_o),
-    .csr_pmp_addr_o   (csr64_pmp_addr_o),
-    .csr_pmp_mseccfg_o(csr64_pmp_mseccfg_o),
-
-    .debug_mode_i       (1'b0),
-    .debug_cause_i      (DBG_CAUSE_NONE),
-    .debug_csr_save_i   (1'b0),
-    .csr_depc_o         (csr64_depc_o),
-    .debug_single_step_o(csr64_debug_single_step_o),
-    .debug_ebreakm_o    (csr64_debug_ebreakm_o),
-    .debug_ebreaku_o    (csr64_debug_ebreaku_o),
-    .trigger_match_o    (csr64_trigger_match_o),
-
-    .pc_if_i(csr64_pc_if_i),
-    .pc_id_i(csr64_pc_id_i),
-
-    .csr_save_if_i      (csr64_save_if_i),
-    .csr_save_id_i      (csr64_save_id_i),
-    .csr_restore_mret_i (csr64_restore_mret_i),
-    .csr_restore_dret_i (csr64_restore_dret_i),
-    .csr_save_cause_i   (csr64_save_cause_i),
-    .csr_mcause_i       (csr64_mcause_i),
-    .csr_mtval_i        (csr64_mtval_i),
-    .illegal_csr_insn_o (csr64_illegal_o),
-
-    .instr_ret_i           (1'b0),
-    .instr_ret_compressed_i(1'b0),
-    .iside_wait_i          (1'b0),
-    .jump_i                (1'b0),
-    .branch_i              (1'b0),
-    .branch_taken_i        (1'b0),
-    .mem_load_i            (1'b0),
-    .mem_store_i           (1'b0),
-    .dside_wait_i          (1'b0),
-    .wfi_wait_i            (1'b0),
-    .div_wait_i            (1'b0)
+    .x_issue_valid_o(),
+    .x_issue_ready_i(1'b0),
+    .x_issue_req_o(),
+    .x_issue_resp_i('0),
+    .x_register_o(),
+    .r_a_upper_o(),
+    .r_b_upper_o(),
+    .x_commit_valid_o(),
+    .x_commit_o(),
+    .x_result_valid_i(1'b0),
+    .x_result_ready_o(),
+    .x_result_i('0),
+    .csr_mstatus_mie_i(1'b0),
+    .irq_pending_i(1'b0),
+    .irqs_i('0),
+    .irq_nm_i(1'b0),
+    .nmi_mode_o(),
+    .lsu_load_err_i(lsu_load_err),
+    .lsu_store_err_i(lsu_store_err),
+    .debug_mode_o(),
+    .debug_cause_o(),
+    .debug_csr_save_o(),
+    .debug_req_i(1'b0),
+    .debug_single_step_i(1'b0),
+    .debug_ebreakm_i(1'b0),
+    .debug_ebreaku_i(1'b0),
+    .trigger_match_i(1'b0),
+    .result_ex_i(result_ex),
+    .csr_rdata_i(32'h0),
+    .rf_raddr_a_o(rf_raddr_a),
+    .rf_rdata_a_i(rf_rdata_a),
+    .rf_raddr_b_o(rf_raddr_b),
+    .rf_rdata_b_i(rf_rdata_b),
+    .rf_ren_a_o(rf_ren_a),
+    .rf_ren_b_o(rf_ren_b),
+    .rf_waddr_id_o(rf_waddr_id),
+    .rf_wdata_id_o(rf_wdata_id),
+    .rf_we_id_o(rf_we_id),
+    .rf_w_upper_id_o(rf_w_upper_id),
+    .lsu_addr_ex_o(lsu_addr_ex),
+    .pc_target_ex_o(pc_target_ex),
+    .en_wb_o(en_wb),
+    .instr_perf_count_id_o(),
+    .perf_jump_o(),
+    .perf_branch_o(),
+    .perf_tbranch_o(),
+    .perf_dside_wait_o(),
+    .perf_wfi_wait_o(),
+    .perf_div_wait_o(),
+    .instr_id_done_o(instr_id_done_o)
   );
-
-  // --------------------
-  // Instantiate EX
-  // --------------------
-  logic [31:0] alu_adder_result_ex_o;
-  logic [31:0] branch_target_o;
 
   cve2_ex_block #(
-    .RV32M(RV32MFast),
+    .RV32M(RV32MNone),
     .RV32B(RV32BNone)
   ) dut_ex (
     .clk_i,
     .rst_ni,
-
-    .alu_operator_i         (alu_operator_ex_o),
-    .alu_operand_a_i        (alu_operand_a_ex_o),
-    .alu_operand_b_i        (alu_operand_b_ex_o),
+    .alu_operator_i(alu_operator_ex),
+    .alu_operand_a_i(alu_operand_a_ex),
+    .alu_operand_b_i(alu_operand_b_ex),
     .alu_instr_first_cycle_i(instr_first_cycle_id_o),
-
-    .multdiv_operator_i     (multdiv_operator_ex_o),
-    .mult_en_i              (mult_en_ex_o),
-    .div_en_i               (div_en_ex_o),
-    .mult_sel_i             (mult_sel_ex_o),
-    .div_sel_i              (div_sel_ex_o),
-    .multdiv_signed_mode_i  (multdiv_signed_mode_ex_o),
-    .multdiv_operand_a_i    (multdiv_operand_a_ex_o),
-    .multdiv_operand_b_i    (multdiv_operand_b_ex_o),
-
-    .imd_val_we_o (imd_val_we_ex),
-    .imd_val_d_o  (imd_val_d_ex),
-    .imd_val_q_i  (imd_val_q_ex),
-
-    .carry_in_i   (carry_in),
-    .carry_out_o  (carry_out),
-
-    .alu_adder_result_ex_o(alu_adder_result_ex_o),
-    .result_ex_o          (result_ex_i),
-    .branch_target_o      (branch_target_o),
-    .branch_decision_o    (branch_decision_o),
-    .alu_is_equal_result_o(alu_is_equal_result_o),
-
-    .ex_valid_o           (ex_valid_i)
+    .alu_word_op_i(alu_word_op_ex),
+    .multdiv_operator_i(multdiv_operator_ex),
+    .mult_en_i(mult_en_ex),
+    .div_en_i(div_en_ex),
+    .mult_sel_i(mult_sel_ex),
+    .div_sel_i(div_sel_ex),
+    .multdiv_signed_mode_i(multdiv_signed_mode_ex),
+    .multdiv_operand_a_i(multdiv_operand_a_ex),
+    .multdiv_operand_b_i(multdiv_operand_b_ex),
+    .imd_val_we_o(imd_val_we_ex),
+    .imd_val_d_o(imd_val_d_ex),
+    .imd_val_q_i(imd_val_q_ex),
+    .carry_in_i(carry_in),
+    .carry_out_o(carry_out),
+    .alu_adder_result_ex_o(alu_adder_result_ex),
+    .result_ex_o(result_ex),
+    .branch_target_o(branch_target_unused),
+    .branch_decision_o(branch_decision),
+    .alu_is_equal_result_o(alu_is_equal_result),
+    .ex_valid_o(ex_valid)
   );
 
-  // --------------------
-  // Instantiate LSU
-  // --------------------
   cve2_load_store_unit dut_lsu (
     .clk_i,
     .rst_ni,
-
-    .data_req_o,
-    .data_gnt_i,
-    .data_rvalid_i,
-    .data_err_i,
-    .data_pmp_err_i,
-
-    .data_addr_o,
-    .data_we_o,
-    .data_be_o,
-    .data_wdata_o,
-    .data_rdata_i,
-
-    .lsu_we_i      (lsu_we_o),
-    .lsu_type_i    (lsu_type_o),
-    .lsu_wdata_i   (lsu_wdata_o),
+    .data_req_o(data_req),
+    .data_gnt_i(data_gnt),
+    .data_rvalid_i(data_rvalid),
+    .data_err_i(data_err),
+    .data_pmp_err_i(data_pmp_err),
+    .data_addr_o(data_addr),
+    .data_we_o(data_we),
+    .data_be_o(data_be),
+    .data_wdata_o(data_wdata),
+    .data_rdata_i(data_rdata),
+    .lsu_we_i(lsu_we_o),
+    .lsu_type_i(lsu_type_o),
+    .lsu_wdata_i(lsu_wdata_o),
     .lsu_sign_ext_i(lsu_sign_ext_o),
-
-    .lsu_rdata_o      (rf_wdata_lsu_i),
-    .lsu_rdata_upper_o(rf_wdata_lsu_upper_i),
-    .lsu_rdata_valid_o(rf_we_lsu_i),
-    .lsu_req_i        (lsu_req_o),
-
-    .adder_result_ex_i(lsu_addr_ex_o),
-
-    .addr_incr_req_o(lsu_addr_incr_req_i),
-    .addr_last_o    (lsu_addr_last_i),
-
-    .lsu_resp_valid_o(lsu_resp_valid_i),
-
-    .load_err_o (lsu_load_err_i),
-    .store_err_o(lsu_store_err_i),
-
-    .busy_o(),
+    .lsu_rdata_o(rf_wdata_lsu),
+    .lsu_rdata_upper_o(rf_wdata_lsu_upper),
+    .lsu_rdata_valid_o(rf_we_lsu),
+    .lsu_req_i(lsu_req_o),
+    .adder_result_ex_i(lsu_addr_ex),
+    .addr_incr_req_o(lsu_addr_incr_req),
+    .addr_last_o(lsu_addr_last),
+    .lsu_resp_valid_o(lsu_resp_valid),
+    .load_err_o(lsu_load_err),
+    .store_err_o(lsu_store_err),
+    .busy_o(lsu_busy),
     .perf_load_o(),
     .perf_store_o()
   );
 
-  // --------------------
-  // Instantiate WB
-  // --------------------
   cve2_wb dut_wb (
-    .clk_i   (clk_i),
-    .rst_ni  (rst_ni),
-    .en_wb_i (en_wb_o),
-
+    .clk_i,
+    .rst_ni,
+    .en_wb_i(en_wb),
     .instr_is_compressed_id_i(instr_is_compressed_i),
-    .instr_perf_count_id_i   (instr_perf_count_id_o),
-
-    .perf_instr_ret_wb_o            (),
-    .perf_instr_ret_compressed_wb_o (),
-
-    .rf_waddr_id_i(rf_waddr_id_o),
-    .rf_wdata_id_i(rf_wdata_id_o),
-    .rf_we_id_i   (rf_we_id_o),
-
-    .rf_wdata_lsu_i(rf_wdata_lsu_i),
-    .rf_we_lsu_i   (rf_we_lsu_i),
-    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper_i),
-
-    .rf_waddr_wb_o(rf_waddr_wb_o),
-    .rf_wdata_wb_o(rf_wdata_wb_o),
-    .rf_we_wb_o   (rf_we_wb_o),
-
-    .lsu_resp_valid_i(lsu_resp_valid_i),
-    .lsu_resp_err_i  (1'b0),
-
-    .w_upper_i (rf_w_upper_id_o),
-    .w_upper_o (rf_w_upper_wb_o)
+    .instr_perf_count_id_i(1'b1),
+    .perf_instr_ret_wb_o(),
+    .perf_instr_ret_compressed_wb_o(),
+    .rf_waddr_id_i(rf_waddr_id),
+    .rf_wdata_id_i(rf_wdata_id),
+    .rf_we_id_i(rf_we_id),
+    .rf_wdata_lsu_i(rf_wdata_lsu),
+    .rf_we_lsu_i(rf_we_lsu),
+    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper),
+    .rf_waddr_wb_o(rf_waddr_wb),
+    .rf_wdata_wb_o(rf_wdata_wb),
+    .rf_we_wb_o(rf_we_wb),
+    .lsu_resp_valid_i(lsu_resp_valid),
+    .lsu_resp_err_i(lsu_load_err | lsu_store_err),
+    .w_upper_i(rf_w_upper_id),
+    .w_upper_o(rf_w_upper_wb)
   );
 
-  // --------------------
-  // Preload mux: allows testbench to write RF directly
-  // --------------------
-  logic        preload_mode;
-  logic [4:0]  preload_waddr;
-  logic [31:0] preload_wdata;
-  logic        preload_we;
-  logic        preload_w_upper;
-
-  initial begin
-    preload_mode    = 1'b0;
-    preload_waddr   = 5'd0;
-    preload_wdata   = 32'h0;
-    preload_we      = 1'b0;
-    preload_w_upper = 1'b0;
-  end
-
-  logic [4:0]  rf_waddr_mux;
-  logic [31:0] rf_wdata_mux;
-  logic        rf_we_mux;
-  logic        rf_w_upper_mux;
-
-  assign rf_waddr_mux   = preload_mode ? preload_waddr   : rf_waddr_wb_o;
-  assign rf_wdata_mux   = preload_mode ? preload_wdata   : rf_wdata_wb_o;
-  assign rf_we_mux      = preload_mode ? preload_we      : rf_we_wb_o;
-  assign rf_w_upper_mux = preload_mode ? preload_w_upper  : rf_w_upper_wb_o;
-
-  // --------------------
-  // Readback mux: allows testbench to read RF directly
-  // --------------------
-  logic        readback_mode;
-  logic [4:0]  readback_raddr;
-  logic        readback_r_upper;
-
-  initial begin
-    readback_mode    = 1'b0;
-    readback_raddr   = 5'd0;
-    readback_r_upper = 1'b0;
-  end
-
-  logic [4:0]  rf_raddr_a_mux;
-  logic        rf_r_upper_a_mux;
-
-  assign rf_raddr_a_mux   = readback_mode ? readback_raddr   : rf_raddr_a_o;
-  assign rf_r_upper_a_mux = readback_mode ? readback_r_upper  : r_a_upper_o;
-
-  // --------------------
-  // Instantiate RF
-  // --------------------
   cve2_register_file_ff #(
-    .RV32E      (1'b0),
-    .DataWidth  (32),
-    .WordZeroVal(32'h0)
+    .RV32E(1'b0),
+    .DataWidth(64),
+    .WordZeroVal(64'h0)
   ) dut_rf (
     .clk_i,
     .rst_ni,
     .test_en_i(1'b0),
-
-    .raddr_a_i(rf_raddr_a_mux),
-    .rdata_a_o(rf_rdata_a_i),
-    .r_a_upper_i(rf_r_upper_a_mux),
-
-    .raddr_b_i(rf_raddr_b_o),
-    .rdata_b_o(rf_rdata_b_i),
-    .r_b_upper_i(r_b_upper_o),
-
+    .raddr_a_i(rf_raddr_a),
+    .rdata_a_o(rf_rdata_a),
+    .r_a_upper_i(1'b0),
+    .raddr_b_i(rf_raddr_b),
+    .rdata_b_o(rf_rdata_b),
+    .r_b_upper_i(1'b0),
     .waddr_a_i(rf_waddr_mux),
     .wdata_a_i(rf_wdata_mux),
-    .we_a_i   (rf_we_mux),
-
-    .w_upper_i(rf_w_upper_mux)
+    .we_a_i(rf_we_mux),
+    .w_upper_i(1'b0)
   );
 
-  // --------------------
-  // Helper task: write one half of a register via preload mux
-  // --------------------
-  task automatic write_rf_half(input logic [4:0] addr,
-                               input logic [31:0] data,
-                               input logic        upper,
-                               input logic [1:0]  upper_code);
-    logic [1:0] unused_upper_code;
-    unused_upper_code = upper_code;
-    @(posedge clk_i);
-    #1;
-    preload_mode    = 1'b1;
-    preload_waddr   = addr;
-    preload_wdata   = data;
-    preload_we      = 1'b1;
-    preload_w_upper = upper;
-    @(posedge clk_i);  // write happens on this edge
-    #1;
-    preload_we      = 1'b0;
-    preload_mode    = 1'b0;
+  function automatic logic [31:0] enc_r(input logic [6:0] funct7,
+                                        input logic [4:0] rs2,
+                                        input logic [4:0] rs1,
+                                        input logic [2:0] funct3,
+                                        input logic [4:0] rd,
+                                        input logic [6:0] opcode);
+    return {funct7, rs2, rs1, funct3, rd, opcode};
+  endfunction
+
+  function automatic logic [31:0] enc_i(input logic [11:0] imm,
+                                        input logic [4:0] rs1,
+                                        input logic [2:0] funct3,
+                                        input logic [4:0] rd,
+                                        input logic [6:0] opcode);
+    return {imm, rs1, funct3, rd, opcode};
+  endfunction
+
+  function automatic logic [31:0] enc_s(input logic [11:0] imm,
+                                        input logic [4:0] rs2,
+                                        input logic [4:0] rs1,
+                                        input logic [2:0] funct3);
+    return {imm[11:5], rs2, rs1, funct3, imm[4:0], 7'b0100011};
+  endfunction
+
+  function automatic logic [31:0] enc_u(input logic [19:0] imm,
+                                        input logic [4:0] rd,
+                                        input logic [6:0] opcode);
+    return {imm, rd, opcode};
+  endfunction
+
+  function automatic logic [31:0] enc_b(input logic [12:0] imm,
+                                        input logic [4:0] rs2,
+                                        input logic [4:0] rs1,
+                                        input logic [2:0] funct3);
+    return {imm[12], imm[10:5], rs2, rs1, funct3, imm[4:1], imm[11], 7'b1100011};
+  endfunction
+
+  task automatic set_pc64(input logic [63:0] pc);
+    begin
+      pc_id_i       = pc[31:0];
+      pc_id_upper_i = pc[63:32];
+    end
   endtask
 
-  // --------------------
-  // Write a full 64-bit register through the two 32-bit RF banks.
-  // --------------------
-  task automatic write_rf_64(input logic [4:0]  addr,
-                             input logic [31:0] upper_val,
-                             input logic [31:0] lower_val,
-                             input logic [1:0]  upper_code);
-    write_rf_half(addr, lower_val, 1'b0, 2'b01);
-    write_rf_half(addr, upper_val, 1'b1, upper_code);
-  endtask
-
-  // --------------------
-  // Write a 32-bit register with an explicit zero upper half.
-  // --------------------
-  task automatic write_rf_32(input logic [4:0]  addr,
-                             input logic [31:0] data);
-    write_rf_64(addr, 32'h0000_0000, data, 2'b00);
-  endtask
-
-  task automatic set_pc64(input logic [31:0] lower_val,
-                          input logic [31:0] upper_val,
-                          input logic [1:0]  upper_code);
-    logic [1:0] unused_upper_code;
-    unused_upper_code = upper_code;
-    pc_id_i       = lower_val;
-    pc_id_upper_i = upper_val;
-    #1;
-  endtask
-
-
-  localparam logic [31:0] ADD_X3_X1_X2 = 32'h002081b3;
-  localparam logic [31:0] ADD_X4_X5_X6 = 32'h00628233;  // ADD x4, x5, x6
-  localparam logic [31:0] SUB_X3_X1_X2 = 32'h402081b3;
-  localparam logic [31:0] AND_X3_X1_X2  = 32'h0020f1b3;
-  localparam logic [31:0] OR_X3_X1_X2   = 32'h0020e1b3;
-  localparam logic [31:0] XOR_X3_X1_X2  = 32'h0020c1b3;
-  localparam logic [31:0] ADDI_X3_X1_POS = 32'h00508193;  // ADDI x3, x1, +5
-  localparam logic [31:0] ADDI_X3_X1_NEG = 32'hfff08193;  // ADDI x3, x1, -1
-  localparam logic [31:0] ANDI_X3_X1_POS = 32'h0050f193;  // ANDI x3, x1, +5
-  localparam logic [31:0] ANDI_X3_X1_NEG = 32'hfff0f193;  // ANDI x3, x1, -1
-  localparam logic [31:0] ORI_X3_X1_POS  = 32'h0050e193;  // ORI  x3, x1, +5
-  localparam logic [31:0] ORI_X3_X1_NEG  = 32'hfff0e193;  // ORI  x3, x1, -1
-  localparam logic [31:0] XORI_X3_X1_POS = 32'h0050c193;  // XORI x3, x1, +5
-  localparam logic [31:0] XORI_X3_X1_NEG = 32'hfff0c193;  // XORI x3, x1, -1
-  localparam logic [31:0] LB_X3_0_X1     = 32'h00008183;  // LB  x3, 0(x1)
-  localparam logic [31:0] LH_X3_0_X1     = 32'h00009183;  // LH  x3, 0(x1)
-  localparam logic [31:0] LW_X3_0_X1     = 32'h0000a183;  // LW  x3, 0(x1)
-  localparam logic [31:0] LBU_X3_0_X1    = 32'h0000c183;  // LBU x3, 0(x1)
-  localparam logic [31:0] LHU_X3_0_X1    = 32'h0000d183;  // LHU x3, 0(x1)
-  localparam logic [31:0] LWU_X3_0_X1    = 32'h0000e183;  // LWU x3, 0(x1)
-  localparam logic [31:0] LD_X3_0_X1     = 32'h0000b183;  // LD  x3, 0(x1)
-  localparam logic [31:0] SD_X2_0_X1     = 32'h0020b023;  // SD  x2, 0(x1)
-  localparam logic [31:0] SLT_X3_X1_X2   = 32'h0020a1b3;  // SLT  x3, x1, x2
-  localparam logic [31:0] SLTU_X3_X1_X2  = 32'h0020b1b3;  // SLTU x3, x1, x2
-  localparam logic [31:0] SLTI_X3_X1_NEG = 32'hfff0a193;  // SLTI  x3, x1, -1
-  localparam logic [31:0] SLTIU_X3_X1_NEG = 32'hfff0b193; // SLTIU x3, x1, -1
-  localparam logic [31:0] BEQ_X1_X2      = 32'h00208463;  // BEQ  x1, x2, +8
-  localparam logic [31:0] BNE_X1_X2      = 32'h00209463;  // BNE  x1, x2, +8
-  localparam logic [31:0] BLT_X1_X2      = 32'h0020c463;  // BLT  x1, x2, +8
-  localparam logic [31:0] BGE_X1_X2      = 32'h0020d463;  // BGE  x1, x2, +8
-  localparam logic [31:0] BLTU_X1_X2     = 32'h0020e463;  // BLTU x1, x2, +8
-  localparam logic [31:0] BGEU_X1_X2     = 32'h0020f463;  // BGEU x1, x2, +8
-  localparam logic [31:0] ADDIW_X3_X1_NEG = 32'hfff0819b; // ADDIW x3, x1, -1
-  localparam logic [31:0] SLLIW_X3_X1_1   = 32'h0010919b; // SLLIW x3, x1, 1
-  localparam logic [31:0] SRLIW_X3_X1_1   = 32'h0010d19b; // SRLIW x3, x1, 1
-  localparam logic [31:0] SRAIW_X3_X1_1   = 32'h4010d19b; // SRAIW x3, x1, 1
-  localparam logic [31:0] ADDW_X3_X1_X2   = 32'h002081bb; // ADDW x3, x1, x2
-  localparam logic [31:0] SUBW_X3_X1_X2   = 32'h402081bb; // SUBW x3, x1, x2
-  localparam logic [31:0] SLLW_X3_X1_X2   = 32'h002091bb; // SLLW x3, x1, x2
-  localparam logic [31:0] SRLW_X3_X1_X2   = 32'h0020d1bb; // SRLW x3, x1, x2
-  localparam logic [31:0] SRAW_X3_X1_X2   = 32'h4020d1bb; // SRAW x3, x1, x2
-  localparam logic [31:0] SLL_X3_X1_X2    = 32'h002091b3; // SLL  x3, x1, x2
-  localparam logic [31:0] SRL_X3_X1_X2    = 32'h0020d1b3; // SRL  x3, x1, x2
-  localparam logic [31:0] SRA_X3_X1_X2    = 32'h4020d1b3; // SRA  x3, x1, x2
-  localparam logic [31:0] SLL_X1_X1_X2    = 32'h002090b3; // SLL  x1, x1, x2
-  localparam logic [31:0] SRL_X2_X1_X2    = 32'h0020d133; // SRL  x2, x1, x2
-  localparam logic [31:0] SLLI_X3_X1_0    = 32'h00009193; // SLLI x3, x1, 0
-  localparam logic [31:0] SLLI_X3_X1_36   = 32'h02409193; // SLLI x3, x1, 36
-  localparam logic [31:0] SRLI_X3_X1_36   = 32'h0240d193; // SRLI x3, x1, 36
-  localparam logic [31:0] SRAI_X3_X1_36   = 32'h4240d193; // SRAI x3, x1, 36
-  localparam logic [31:0] LUI_X3_POS       = 32'h7ffff1b7; // LUI   x3, 0x7ffff
-  localparam logic [31:0] LUI_X3_NEG       = 32'h800001b7; // LUI   x3, 0x80000
-  localparam logic [31:0] AUIPC_X3_1       = 32'h00001197; // AUIPC x3, 0x1
-  localparam logic [31:0] AUIPC_X3_2       = 32'h00002197; // AUIPC x3, 0x2
-  localparam logic [31:0] AUIPC_X3_NEG     = 32'hfffff197; // AUIPC x3, -0x1
-  localparam logic [31:0] JAL_X3_0         = 32'h000001ef; // JAL   x3, 0
-  localparam logic [31:0] JALR_X3_X1_0     = 32'h000081e7; // JALR  x3, 0(x1)
-  localparam logic [31:0] CSRRS_X3_MISA_X0 = 32'h301021f3; // CSRRS x3, misa, x0
-  localparam logic [31:0] CSRRS_X3_MEPC_X0 = 32'h341021f3; // CSRRS x3, mepc, x0
-  localparam logic [31:0] CSRRW_X3_MEPC_X1 = 32'h341091f3; // CSRRW x3, mepc, x1
-  localparam logic [31:0] CSRRWI_X3_MEPC_5 = 32'h3412d1f3; // CSRRWI x3, mepc, 5
-  localparam logic [31:0] MRET_INSN        = 32'h30200073;
-
-  task automatic inject_instr(input  logic [31:0]  encoding,
-                            output int unsigned  cycles_taken);
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-
-    // Wait one posedge: FIRST_CYCLE executes
-    @(posedge clk_i);
-    #1;
-
-    cycles_taken = 1;
-    while (dut_id.id_fsm_q != 2'b00) begin
-      cycles_taken++;
+  task automatic write_rf64(input logic [4:0] addr, input logic [63:0] value);
+    begin
+      @(negedge clk_i);
+      preload_waddr = addr;
+      preload_wdata = value;
+      preload_we    = 1'b1;
       @(posedge clk_i);
       #1;
+      preload_we    = 1'b0;
     end
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-
-    repeat (3) @(posedge clk_i);
   endtask
 
-  task automatic inject_two_instrs_no_gap(input  logic [31:0]  first_encoding,
-                                          input  logic [31:0]  second_encoding,
-                                          output int unsigned  first_cycles,
-                                          output int unsigned  second_cycles);
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = first_encoding;
-    instr_rdata_alu_i = first_encoding;
-
-    @(posedge clk_i);
-    #1;
-    first_cycles = 1;
-    while (dut_id.id_fsm_q != 4'd0) begin
-      first_cycles++;
-      @(posedge clk_i);
-      #1;
-    end
-
-    instr_rdata_i     = second_encoding;
-    instr_rdata_alu_i = second_encoding;
-
-    @(posedge clk_i);
-    #1;
-    second_cycles = 1;
-    while (dut_id.id_fsm_q != 4'd0) begin
-      second_cycles++;
-      @(posedge clk_i);
-      #1;
-    end
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  task automatic inject_illegal_instr_check(input string test_name,
-                                            input logic [31:0] encoding);
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    #1;
-
-    if (!illegal_insn_o) begin
-      $error("%s FAIL: instruction %08h was not flagged illegal", test_name, encoding);
+  function automatic logic [63:0] read_rf64(input logic [4:0] addr);
+    if (addr == 5'd0) begin
+      return 64'h0;
     end else begin
-      $display("%s PASS: instruction %08h flagged illegal", test_name, encoding);
+      return dut_rf.rf_mem_a[addr];
     end
+  endfunction
 
-    if (csr_access_o || csr_op_en_o || rf_we_id_o) begin
-      $error("%s FAIL: csr_access=%0b csr_op_en=%0b rf_we=%0b",
-             test_name, csr_access_o, csr_op_en_o, rf_we_id_o);
-    end else begin
-      $display("%s PASS: CSR/RF side effects suppressed", test_name);
-    end
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  task automatic inject_csr(input  logic [31:0]  encoding,
-                            input  logic [63:0]  csr_read_data,
-                            output int unsigned  cycles_taken);
-    csr_rdata_full_i = csr_read_data;
-    inject_instr(encoding, cycles_taken);
-    csr_rdata_full_i = 64'h0000_0000_0000_0000;
-  endtask
-
-  task automatic inject_csr_capture_wdata(input  logic [31:0] encoding,
-                                          input  logic [63:0] csr_read_data,
-                                          output int unsigned cycles_taken,
-                                          output logic [63:0] captured_wdata);
-    logic captured;
-    logic lower_seen;
-    logic [31:0] captured_lower;
-
-    captured       = 1'b0;
-    lower_seen     = 1'b0;
-    captured_wdata = 64'h0000_0000_0000_0000;
-    captured_lower = 32'h0000_0000;
-    csr_rdata_full_i = csr_read_data;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    #1;
-    if (csr_wdata_capture_o) begin
-      captured_lower = csr_wdata_o;
-      lower_seen     = 1'b1;
-    end
-
-    @(posedge clk_i);
-    #1;
-    cycles_taken = 1;
-    if (csr_wdata_capture_o) begin
-      captured_lower = csr_wdata_o;
-      lower_seen     = 1'b1;
-    end
-    if (csr_op_en_o) begin
-      captured_wdata = csr_wdata_upper_o ?
-                       {csr_wdata_o, captured_lower} :
-                       {32'h0000_0000, csr_wdata_o};
-      captured       = 1'b1;
-    end
-
-    while (dut_id.id_fsm_q != 3'b000) begin
-      cycles_taken++;
-      @(posedge clk_i);
-      #1;
-      if (csr_wdata_capture_o) begin
-        captured_lower = csr_wdata_o;
-        lower_seen     = 1'b1;
-      end
-      if (csr_op_en_o) begin
-        if (csr_wdata_upper_o && !lower_seen) begin
-          $error("CSR upper write observed before lower capture for instruction %08h", encoding);
+  task automatic run_instr(input logic [31:0] encoding, output int cycles);
+    logic is_mem_op;
+    logic mem_resp_seen;
+    begin
+      @(negedge clk_i);
+      instr_rdata_i = encoding;
+      instr_valid_i = 1'b1;
+      is_mem_op = (encoding[6:0] == 7'b0000011) || (encoding[6:0] == 7'b0100011);
+      mem_resp_seen = 1'b0;
+      last_pc_set = 1'b0;
+      last_pc_target = 64'h0;
+      cycles = 0;
+      begin : wait_done
+        forever begin
+          @(posedge clk_i);
+          #1;
+          if (lsu_resp_valid) begin
+            mem_resp_seen = 1'b1;
+          end
+          if (pc_set_o) begin
+            last_pc_set = 1'b1;
+            last_pc_target = pc_target_ex;
+          end
+          cycles++;
+          if (instr_id_done_o && (!is_mem_op || mem_resp_seen)) begin
+            disable wait_done;
+          end
+          if (cycles > 30) begin
+            $display("TIMEOUT: instruction %h did not complete", encoding);
+            $display("  state=%0d lsu_req_dec=%0b lsu_req=%0b data_req=%0b data_rvalid=%0b lsu_resp=%0b instr_done=%0b stall=%0b",
+                     dut_id.id_fsm_q, dut_id.lsu_req_dec, lsu_req_o, data_req, data_rvalid,
+                     lsu_resp_valid, instr_id_done_o, dut_id.stall_id);
+            errors++;
+            disable wait_done;
+          end
         end
-        captured_wdata = csr_wdata_upper_o ?
-                         {csr_wdata_o, captured_lower} :
-                         {32'h0000_0000, csr_wdata_o};
-        captured       = 1'b1;
       end
+      if (is_mem_op) begin
+        @(posedge clk_i);
+        #1;
+      end
+      @(negedge clk_i);
+      instr_valid_i = 1'b0;
+      instr_rdata_i = NOP;
+      repeat (2) @(posedge clk_i);
+      #1;
     end
-
-    if (!captured) begin
-      $error("No CSR write data captured for instruction %08h", encoding);
-    end
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    csr_rdata_full_i  = 64'h0000_0000_0000_0000;
-
-    repeat (3) @(posedge clk_i);
   endtask
 
-  task automatic inject_instr_capture_target(input  logic [31:0] encoding,
-                                             output int unsigned cycles_taken,
-                                             output logic [63:0] pc_target);
-    logic target_seen;
-
-    target_seen = 1'b0;
-    pc_target   = 64'h0000_0000_0000_0000;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-
-    @(posedge clk_i);
-    #1;
-    cycles_taken = 1;
-    if (pc_set_o) begin
-      pc_target   = pc_target_ex_o;
-      target_seen = 1'b1;
-    end
-
-    while (dut_id.id_fsm_q != 3'b000) begin
-      cycles_taken++;
-      @(posedge clk_i);
-      #1;
-      if (pc_set_o) begin
-        pc_target   = pc_target_ex_o;
-        target_seen = 1'b1;
-      end
-    end
-
-    if (!target_seen) begin
-      $error("No PC target captured for instruction %08h", encoding);
-    end
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  task automatic inject_load(input  logic [31:0]  encoding,
-                             input  logic [31:0]  mem_word,
-                             output int unsigned  cycles_taken);
-    logic        resp_pending;
-    logic [31:0] resp_data;
-
-    resp_pending = 1'b0;
-    resp_data    = 32'h0000_0000;
-    cycles_taken = 0;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    data_rvalid_i     = 1'b0;
-    data_rdata_i      = 32'h0000_0000;
-
-    do begin
-      @(posedge clk_i);
-      #1;
-      cycles_taken++;
-
-      if (resp_pending) begin
-        data_rdata_i  = resp_data;
-        data_rvalid_i = 1'b1;
-        resp_pending  = 1'b0;
+  task automatic check_reg(input string name, input logic [4:0] addr, input logic [63:0] exp);
+    logic [63:0] got;
+    begin
+      got = read_rf64(addr);
+      if (got !== exp) begin
+        $display("ERROR %s: x%0d expected %h got %h", name, addr, exp, got);
+        errors++;
       end else begin
-        data_rdata_i  = 32'h0000_0000;
-        data_rvalid_i = 1'b0;
+        $display("PASS  %s: x%0d = %h", name, addr, got);
       end
-
-      if (data_req_o && !data_we_o) begin
-        resp_data    = mem_word;
-        resp_pending = 1'b1;
-      end
-    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    data_rdata_i      = 32'h0000_0000;
-
-    repeat (3) @(posedge clk_i);
+    end
   endtask
 
-  task automatic inject_load_explicit_addr(input  logic [31:0] encoding,
-                                           input  logic [31:0] mem_word,
-                                           output int unsigned cycles_taken,
-                                           output logic [63:0] load_addr);
-    logic        resp_pending;
-    logic [31:0] resp_data;
-    logic        addr_seen;
-
-    resp_pending = 1'b0;
-    resp_data    = 32'h0000_0000;
-    addr_seen    = 1'b0;
-    load_addr    = 64'h0000_0000_0000_0000;
-    cycles_taken = 0;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    data_rvalid_i     = 1'b0;
-    data_rdata_i      = 32'h0000_0000;
-
-    do begin
-      @(posedge clk_i);
-      #1;
-      cycles_taken++;
-
-      if (resp_pending) begin
-        data_rdata_i  = resp_data;
-        data_rvalid_i = 1'b1;
-        resp_pending  = 1'b0;
+  task automatic check_mem(input string name, input int index, input logic [31:0] exp);
+    begin
+      if (data_mem[index] !== exp) begin
+        $display("ERROR %s: mem[%0d] expected %h got %h", name, index, exp, data_mem[index]);
+        errors++;
       end else begin
-        data_rdata_i  = 32'h0000_0000;
-        data_rvalid_i = 1'b0;
+        $display("PASS  %s: mem[%0d] = %h", name, index, exp);
       end
+    end
+  endtask
 
-      if (data_req_o && !data_we_o) begin
-        if (!addr_seen) begin
-          load_addr = data_addr_o;
-          addr_seen = 1'b1;
-        end
-        resp_data    = mem_word;
-        resp_pending = 1'b1;
+  task automatic clear_regs;
+    begin
+      for (int i = 1; i < 32; i++) begin
+        write_rf64(i[4:0], 64'h0);
       end
-    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    data_rdata_i      = 32'h0000_0000;
-
-    repeat (6) @(posedge clk_i);
+    end
   endtask
 
-  task automatic inject_ld(input  logic [31:0]  encoding,
-                           input  logic [31:0]  lower_word,
-                           input  logic [31:0]  upper_word,
-                           output int unsigned  cycles_taken);
-    logic        resp_pending;
-    logic [31:0] resp_data;
-    int unsigned req_count;
+  always @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      data_rvalid      <= 1'b0;
+      data_rvalid_next <= 1'b0;
+      data_rdata       <= 32'h0;
+      data_rdata_next  <= 32'h0;
+    end else begin
+      data_rvalid <= data_rvalid_next;
+      data_rdata  <= data_rdata_next;
 
-    resp_pending = 1'b0;
-    resp_data    = 32'h0000_0000;
-    req_count    = 0;
-    cycles_taken = 0;
+      data_rvalid_next <= data_req;
+      data_rdata_next  <= data_mem[data_addr[9:2]];
 
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    data_rvalid_i     = 1'b0;
-    data_rdata_i      = 32'h0000_0000;
-
-    do begin
-      @(posedge clk_i);
-      #1;
-      cycles_taken++;
-
-      if (resp_pending) begin
-        data_rdata_i  = resp_data;
-        data_rvalid_i = 1'b1;
-        resp_pending  = 1'b0;
-      end else begin
-        data_rdata_i  = 32'h0000_0000;
-        data_rvalid_i = 1'b0;
+      if (data_req && data_we) begin
+        if (data_be[0]) data_mem[data_addr[9:2]][7:0]   <= data_wdata[7:0];
+        if (data_be[1]) data_mem[data_addr[9:2]][15:8]  <= data_wdata[15:8];
+        if (data_be[2]) data_mem[data_addr[9:2]][23:16] <= data_wdata[23:16];
+        if (data_be[3]) data_mem[data_addr[9:2]][31:24] <= data_wdata[31:24];
       end
-
-      if (data_req_o && !data_we_o) begin
-        resp_data    = (req_count == 0) ? lower_word : upper_word;
-        resp_pending = 1'b1;
-        req_count++;
-      end
-    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    data_rdata_i      = 32'h0000_0000;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  task automatic inject_sd(input  logic [31:0]  encoding,
-                           output int unsigned  cycles_taken,
-                           output logic [63:0]  lower_addr,
-                           output logic [31:0]  lower_wdata,
-                           output logic [3:0]   lower_be,
-                           output logic [63:0]  upper_addr,
-                           output logic [31:0]  upper_wdata,
-                           output logic [3:0]   upper_be);
-    logic        resp_pending;
-    int unsigned req_count;
-
-    resp_pending = 1'b0;
-    req_count    = 0;
-    cycles_taken = 0;
-    lower_addr   = 64'h0000_0000_0000_0000;
-    upper_addr   = 64'h0000_0000_0000_0000;
-    lower_wdata  = 32'h0000_0000;
-    upper_wdata  = 32'h0000_0000;
-    lower_be     = 4'b0000;
-    upper_be     = 4'b0000;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    data_rvalid_i     = 1'b0;
-    data_rdata_i      = 32'h0000_0000;
-
-    do begin
-      @(posedge clk_i);
-      #1;
-      cycles_taken++;
-
-      if (resp_pending) begin
-        data_rvalid_i = 1'b1;
-        resp_pending  = 1'b0;
-      end else begin
-        data_rvalid_i = 1'b0;
-      end
-
-      if (data_req_o && data_we_o) begin
-        if (req_count == 0) begin
-          lower_addr  = data_addr_o;
-          lower_wdata = data_wdata_o;
-          lower_be    = data_be_o;
-        end else begin
-          upper_addr  = data_addr_o;
-          upper_wdata = data_wdata_o;
-          upper_be    = data_be_o;
-        end
-        req_count++;
-        resp_pending = 1'b1;
-      end
-    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    data_rdata_i      = 32'h0000_0000;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  task automatic inject_sd_explicit_addr(input  logic [31:0]  encoding,
-                                         output int unsigned  cycles_taken,
-                                         output logic [63:0]  lower_addr,
-                                         output logic [31:0]  lower_wdata,
-                                         output logic [3:0]   lower_be,
-                                         output logic [63:0]  upper_addr,
-                                         output logic [31:0]  upper_wdata,
-                                         output logic [3:0]   upper_be);
-    logic        resp_pending;
-    int unsigned req_count;
-
-    resp_pending = 1'b0;
-    req_count    = 0;
-    cycles_taken = 0;
-    lower_addr   = 64'h0000_0000_0000_0000;
-    upper_addr   = 64'h0000_0000_0000_0000;
-    lower_wdata  = 32'h0000_0000;
-    upper_wdata  = 32'h0000_0000;
-    lower_be     = 4'b0000;
-    upper_be     = 4'b0000;
-
-    @(posedge clk_i);
-    #1;
-    instr_valid_i     = 1'b1;
-    instr_rdata_i     = encoding;
-    instr_rdata_alu_i = encoding;
-    data_rvalid_i     = 1'b0;
-    data_rdata_i      = 32'h0000_0000;
-
-    do begin
-      @(posedge clk_i);
-      #1;
-      cycles_taken++;
-
-      if (resp_pending) begin
-        data_rvalid_i = 1'b1;
-        resp_pending  = 1'b0;
-      end else begin
-        data_rvalid_i = 1'b0;
-      end
-
-      if (data_req_o && data_we_o) begin
-        if (req_count == 0) begin
-          lower_addr  = data_addr_o;
-          lower_wdata = data_wdata_o;
-          lower_be    = data_be_o;
-        end else begin
-          upper_addr  = data_addr_o;
-          upper_wdata = data_wdata_o;
-          upper_be    = data_be_o;
-        end
-        req_count++;
-        resp_pending = 1'b1;
-      end
-    end while ((dut_id.id_fsm_q != 4'd0) || resp_pending || data_rvalid_i);
-
-    instr_valid_i     = 1'b0;
-    instr_rdata_i     = 32'h0000_0013;
-    instr_rdata_alu_i = 32'h0000_0013;
-    data_rdata_i      = 32'h0000_0000;
-
-    repeat (3) @(posedge clk_i);
-  endtask
-
-  // --------------------
-  // Read back a full 64-bit register via the readback mux.
-  // --------------------
-  logic [31:0] readback_lower, readback_upper;
-
-  task automatic check_result(input string       test_name,
-                              input logic [4:0]   regnum,
-                              input logic [31:0]  exp_lower,
-                              input logic [1:0]   exp_upper_code,
-                              input int unsigned  exp_cycles,
-                              input int unsigned  actual_cycles,
-                              input logic [31:0]  exp_upper,
-                              input logic         do_check_upper);
-    logic pass;
-    logic [31:0] expected_upper;
-    logic [31:0] actual_upper;
-    logic [63:0] expected_value;
-    logic [63:0] actual_value;
-    pass = 1'b1;
-
-    // Read lower half via readback mux
-    readback_mode    = 1'b1;
-    readback_raddr   = regnum;
-    readback_r_upper = 1'b0;
-    #1;
-    readback_lower = rf_rdata_a_i;
-
-    // Read upper half
-    readback_r_upper = 1'b1;
-    #1;
-    readback_upper = rf_rdata_a_i;
-
-    // Release read port
-    readback_mode = 1'b0;
-
-    expected_upper = do_check_upper ? exp_upper : tb_expected_upper_from_code(exp_upper_code);
-    actual_upper   = readback_upper;
-    expected_value = {expected_upper, exp_lower};
-    actual_value   = {actual_upper, readback_lower};
-
-    if (actual_value !== expected_value) begin
-      $error("%s FAIL: x%0d value = %016h, expected %016h",
-             test_name, regnum, actual_value, expected_value);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: x%0d value = %016h", test_name, regnum, actual_value);
     end
-
-    $display("%s INFO: raw lower=%08h raw upper=%08h",
-             test_name, readback_lower, readback_upper);
-
-    if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected previous count %0d",
-               test_name, actual_cycles, exp_cycles);
-    end else
-      $display("%s PASS: cycles = %0d", test_name, actual_cycles);
-
-    if (pass)
-      $display("%s: ALL CHECKS PASSED", test_name);
-    else
-      $display("%s: SOME CHECKS FAILED", test_name);
-  endtask
-
-  task automatic check_cycles_only(input string       test_name,
-                                   input int unsigned exp_cycles,
-                                   input int unsigned actual_cycles);
-    if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected previous count %0d",
-               test_name, actual_cycles, exp_cycles);
-    end else begin
-      $display("%s PASS: cycles = %0d", test_name, actual_cycles);
-    end
-  endtask
-
-  task automatic check_addr64(input string      test_name,
-                              input logic [63:0] actual_addr,
-                              input logic [63:0] expected_addr);
-    if (actual_addr !== expected_addr) begin
-      $error("%s FAIL: addr = %016h, expected %016h", test_name, actual_addr, expected_addr);
-    end else begin
-      $display("%s PASS: addr = %016h", test_name, actual_addr);
-    end
-  endtask
-
-  task automatic check_value64(input string      test_name,
-                               input logic [63:0] actual_value,
-                               input logic [63:0] expected_value);
-    if (actual_value !== expected_value) begin
-      $error("%s FAIL: value = %016h, expected %016h",
-             test_name, actual_value, expected_value);
-    end else begin
-      $display("%s PASS: value = %016h", test_name, actual_value);
-    end
-  endtask
-
-  task automatic csr64_write(input csr_num_e    csr_addr,
-                             input logic [63:0] csr_wdata);
-    @(posedge clk_i);
-    #1;
-    csr64_access_i        = 1'b1;
-    csr64_addr_i          = csr_addr;
-    csr64_wdata_i         = csr_wdata[31:0];
-    csr64_wdata_upper_i   = 1'b0;
-    csr64_wdata_capture_i = 1'b1;
-    csr64_op_i            = CSR_OP_WRITE;
-    csr64_op_en_i         = 1'b0;
-
-    @(posedge clk_i);
-    #1;
-    csr64_wdata_i         = csr_wdata[63:32];
-    csr64_wdata_upper_i   = 1'b1;
-    csr64_wdata_capture_i = 1'b0;
-    csr64_op_en_i         = 1'b1;
-
-    @(posedge clk_i);
-    #1;
-    csr64_access_i         = 1'b0;
-    csr64_op_en_i          = 1'b0;
-    csr64_op_i             = CSR_OP_READ;
-    csr64_wdata_i          = 32'h0000_0000;
-    csr64_wdata_upper_i    = 1'b0;
-    csr64_wdata_capture_i  = 1'b0;
-  endtask
-
-  task automatic csr64_read_check(input string      test_name,
-                                  input csr_num_e   csr_addr,
-                                  input logic [63:0] expected_value);
-    logic [31:0] actual_lower;
-    logic [31:0] actual_upper;
-    logic [63:0] actual_value;
-
-    @(posedge clk_i);
-    #1;
-    csr64_access_i        = 1'b1;
-    csr64_addr_i          = csr_addr;
-    csr64_op_i            = CSR_OP_READ;
-    csr64_op_en_i         = 1'b0;
-    csr64_rdata_upper_i   = 1'b0;
-    csr64_rdata_capture_i = 1'b0;
-    #1;
-    actual_lower = csr64_rdata_o;
-
-    csr64_rdata_capture_i = 1'b1;
-    @(posedge clk_i);
-    #1;
-    csr64_rdata_capture_i = 1'b0;
-    csr64_rdata_upper_i   = 1'b1;
-    #1;
-    actual_upper = csr64_rdata_o;
-
-    actual_value = {actual_upper, actual_lower};
-    check_value64(test_name, actual_value, expected_value);
-    csr64_access_i      = 1'b0;
-    csr64_rdata_upper_i = 1'b0;
-  endtask
-
-  task automatic csr64_save_id_exception(input logic [63:0] pc_value,
-                                         input logic [63:0] mtval_value);
-    @(posedge clk_i);
-    #1;
-    csr64_pc_id_i      = pc_value;
-    csr64_mtval_i      = mtval_value;
-    csr64_mcause_i     = EXC_CAUSE_ILLEGAL_INSN;
-    csr64_save_id_i    = 1'b1;
-    csr64_save_cause_i = 1'b1;
-
-    @(posedge clk_i);
-    #1;
-    csr64_save_id_i    = 1'b0;
-    csr64_save_cause_i = 1'b0;
-  endtask
-
-  task automatic check_sd_result(input string       test_name,
-                                 input logic [31:0] exp_lower,
-                                 input logic [31:0] exp_upper,
-                                 input logic [63:0] exp_lower_addr,
-                                 input logic [63:0] exp_upper_addr,
-                                 input logic [63:0] lower_addr,
-                                 input logic [31:0] lower_wdata,
-                                 input logic [3:0]  lower_be,
-                                 input logic [63:0] upper_addr,
-                                 input logic [31:0] upper_wdata,
-                                 input logic [3:0]  upper_be,
-                                 input int unsigned exp_cycles,
-                                 input int unsigned actual_cycles);
-    logic pass;
-    pass = 1'b1;
-
-    if (lower_addr !== exp_lower_addr) begin
-      $error("%s FAIL: lower store addr = %016h, expected %016h",
-             test_name, lower_addr, exp_lower_addr);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: lower store addr = %016h", test_name, lower_addr);
-    end
-
-    if (upper_addr !== exp_upper_addr) begin
-      $error("%s FAIL: upper store addr = %016h, expected %016h",
-             test_name, upper_addr, exp_upper_addr);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: upper store addr = %016h", test_name, upper_addr);
-    end
-
-    if (lower_wdata !== exp_lower) begin
-      $error("%s FAIL: lower store data = %08h, expected %08h", test_name, lower_wdata, exp_lower);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: lower store data = %08h", test_name, lower_wdata);
-    end
-
-    if (upper_wdata !== exp_upper) begin
-      $error("%s FAIL: upper store data = %08h, expected %08h", test_name, upper_wdata, exp_upper);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: upper store data = %08h", test_name, upper_wdata);
-    end
-
-    if (lower_be !== 4'b1111) begin
-      $error("%s FAIL: lower byte enable = %04b, expected 1111", test_name, lower_be);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: lower byte enable = %04b", test_name, lower_be);
-    end
-
-    if (upper_be !== 4'b1111) begin
-      $error("%s FAIL: upper byte enable = %04b, expected 1111", test_name, upper_be);
-      pass = 1'b0;
-    end else begin
-      $display("%s PASS: upper byte enable = %04b", test_name, upper_be);
-    end
-
-    if (actual_cycles !== exp_cycles) begin
-      $display("%s NOTE: cycles = %0d, expected previous count %0d",
-               test_name, actual_cycles, exp_cycles);
-    end else begin
-      $display("%s PASS: cycles = %0d", test_name, actual_cycles);
-    end
-
-    if (pass)
-      $display("%s: ALL CHECKS PASSED", test_name);
-    else
-      $display("%s: SOME CHECKS FAILED", test_name);
-  endtask
-
-  // --------------------
-  // Main test stimulus
-  // --------------------
-  int unsigned cycles;
-  logic [63:0] sd_lower_addr;
-  logic [31:0] sd_lower_wdata;
-  logic [3:0]  sd_lower_be;
-  logic [63:0] sd_upper_addr;
-  logic [31:0] sd_upper_wdata;
-  logic [3:0]  sd_upper_be;
-  logic [63:0] captured_pc_target;
-  logic [63:0] captured_load_addr;
-  logic [63:0] captured_csr_wdata;
-  int unsigned cycles_second;
-
-  initial begin
-    // Wait for reset release
-    @(posedge rst_ni);
-    #1;
-
-    // Wait for controller to reach DECODE state
-    repeat (15) @(posedge clk_i);
-
-    // ==========================================================
-    // Test 1: tag 00 + tag 00, no carry
-    // Pure 32-bit add. Always 1 cycle. Carry ignored.
-    // x1=5 (tag 00), x2=3 (tag 00) → x3=8 (tag 00)
-    // ==========================================================
-    $display("\n---- Test 1: tag00+tag00, no carry ----");
-    write_rf_32(5'd1, 32'h0000_0005);
-    write_rf_32(5'd2, 32'h0000_0003);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T01", 5'd3, 32'h0000_0008, 2'b00, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 2: tag 00 + tag 00, with carry (overflow ignored)
-    // x1=FFFFFFFF (tag 00), x2=1 (tag 00) → x3=0 (tag 00), 1 cycle
-    // ==========================================================
-    $display("\n---- Test 2: tag00+tag00, carry ignored ----");
-    write_rf_32(5'd1, 32'hFFFF_FFFF);
-    write_rf_32(5'd2, 32'h0000_0001);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T02", 5'd3, 32'h0000_0000, 2'b01, 1, cycles,
-                 32'h0000_0001, 1'b1);
-
-    // ==========================================================
-    // Test 3: tag 10 + tag 10, no carry → 1 cycle, tag 10
-    // x1={upper=0, lower=5} tag 10
-    // x2={upper=0, lower=3} tag 10
-    // upper = 0+0+0 = 0, inferable → tag 10
-    // ==========================================================
-    $display("\n---- Test 3: tag10+tag10, no carry ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0005, 2'b10);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T03", 5'd3, 32'h0000_0008, 2'b10, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 4: tag 10 + tag 10, with carry → 2 cycles, tag from WB
-    // x1={upper=0, lower=FFFFFFFF} tag 10
-    // x2={upper=0, lower=1} tag 10
-    // lower=0, carry=1, upper=0+0+1=1, not inferable → 2 cycles, tag 01
-    // ==========================================================
-    $display("\n---- Test 4: tag10+tag10, carry → 2 cycles ----");
-    write_rf_64(5'd1, 32'h0, 32'hFFFF_FFFF, 2'b10);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0001, 2'b10);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T04", 5'd3, 32'h0000_0000, 2'b01, 2, cycles,
-                 32'h0000_0001, 1'b1);
-
-    // ==========================================================
-    // Test 5: tag 10 + tag 11, no carry → 1 cycle, tag 11
-    // x1={upper=0, lower=5} tag 10
-    // x2={upper=FF, lower=3} tag 11
-    // upper = 0+FF+0 = FF, inferable → tag 11
-    // ==========================================================
-    $display("\n---- Test 5: tag10+tag11, no carry ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0005, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T05", 5'd3, 32'h0000_0008, 2'b11, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 6: tag 10 + tag 11, with carry → 1 cycle, tag 10
-    // x1={upper=0, lower=FFFFFFFF} tag 10
-    // x2={upper=FF, lower=1} tag 11
-    // lower=0, carry=1, upper = 0+FF+1 = 00, inferable → tag 10
-    // ==========================================================
-    $display("\n---- Test 6: tag10+tag11, carry ----");
-    write_rf_64(5'd1, 32'h0, 32'hFFFF_FFFF, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0001, 2'b11);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T06", 5'd3, 32'h0000_0000, 2'b10, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 7: tag 11 + tag 10, no carry → 1 cycle, tag 11 (symmetric of T05)
-    // x1={upper=FF, lower=5} tag 11
-    // x2={upper=0, lower=3} tag 10
-    // upper = FF+0+0 = FF, inferable → tag 11
-    // ==========================================================
-    $display("\n---- Test 7: tag11+tag10, no carry ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T07", 5'd3, 32'h0000_0008, 2'b11, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 8: tag 11 + tag 10, with carry → 1 cycle, tag 10 (symmetric of T06)
-    // x1={upper=FF, lower=FFFFFFFF} tag 11
-    // x2={upper=0, lower=1} tag 10
-    // lower=0, carry=1, upper = FF+0+1 = 00, inferable → tag 10
-    // ==========================================================
-    $display("\n---- Test 8: tag11+tag10, carry ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hFFFF_FFFF, 2'b11);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0001, 2'b10);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T08", 5'd3, 32'h0000_0000, 2'b10, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 9: tag 11 + tag 11, no carry → 2 cycles
-    // x1={upper=FF, lower=5} tag 11
-    // x2={upper=FF, lower=3} tag 11
-    // lower=8, carry=0, upper=FF+FF+0=FE, not inferable → 2 cycles
-    // ==========================================================
-    $display("\n---- Test 9: tag11+tag11, no carry → 2 cycles ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T09", 5'd3, 32'h0000_0008, 2'b01, 2, cycles,
-                 32'hFFFF_FFFE, 1'b1);
-
-    // ==========================================================
-    // Test 10: tag 11 + tag 11, with carry → 1 cycle, tag 11
-    // x1={upper=FF, lower=FFFFFFFF} tag 11
-    // x2={upper=FF, lower=1} tag 11
-    // lower=0, carry=1, upper=FF+FF+1=FF, inferable → tag 11
-    // ==========================================================
-    $display("\n---- Test 10: tag11+tag11, carry ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hFFFF_FFFF, 2'b11);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0001, 2'b11);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T10", 5'd3, 32'h0000_0000, 2'b11, 1, cycles,
-                 32'h0, 1'b0);
-
-    // ==========================================================
-    // Test 11: tag 01 + tag 01, no carry → always 2 cycles
-    // x1={upper=3, lower=5} tag 01
-    // x2={upper=1, lower=2} tag 01
-    // Must read uppers from RF → 2 cycles
-    // ==========================================================
-    $display("\n---- Test 11: tag01+tag01, no carry ----");
-    write_rf_64(5'd1, 32'h0000_0003, 32'h0000_0005, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0002, 2'b01);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T11", 5'd3, 32'h0000_0007, 2'b01, 2, cycles,
-                 32'h0000_0004, 1'b1);
-
-    // ==========================================================
-    // Test 12: tag 01 + tag 01, with carry → 2 cycles
-    // x1={upper=1, lower=FFFFFFFF} tag 01
-    // x2={upper=0, lower=1} tag 01
-    // lower=0, carry=1, upper=1+0+1=2
-    // ==========================================================
-    $display("\n---- Test 12: tag01+tag01, carry ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'hFFFF_FFFF, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b01);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T12", 5'd3, 32'h0000_0000, 2'b01, 2, cycles,
-                 32'h0000_0002, 1'b1);
-
-    // ==========================================================
-    // Test 13: tag 01 + tag 10 → 2 cycles (one explicit forces 2-cycle)
-    // x1={upper=ABCD0000, lower=5} tag 01
-    // x2={upper=0, lower=3} tag 10
-    // ==========================================================
-    $display("\n---- Test 13: tag01+tag10 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_0000, 32'h0000_0005, 2'b01);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0003, 2'b10);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T13", 5'd3, 32'h0000_0008, 2'b01, 2, cycles,
-                 32'hABCD_0000, 1'b1);
-
-    // ==========================================================
-    // Test 14: tag 01 + tag 01, upper result is all zeros → tag 10
-    // x1={upper=FFFFFFFF, lower=5} tag 01
-    // x2={upper=00000001, lower=3} tag 01
-    // upper = FFFFFFFF+1+0 = 00000000 → WB sets tag 10
-    // ==========================================================
-    $display("\n---- Test 14: tag01+tag01, upper=0 → tag 10 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T14", 5'd3, 32'h0000_0008, 2'b10, 2, cycles,
-                 32'h0000_0000, 1'b1);
-
-    // ==========================================================
-    // Test 15: tag 01 + tag 01, upper result is all ones → tag 11
-    // x1={upper=FFFFFFFE, lower=5} tag 01
-    // x2={upper=00000001, lower=3} tag 01
-    // upper = FFFFFFFE+1+0 = FFFFFFFF → WB sets tag 11
-    // ==========================================================
-    $display("\n---- Test 15: tag01+tag01, upper=FF → tag 11 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFE, 32'h0000_0005, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
-    inject_instr(ADD_X3_X1_X2, cycles);
-    check_result("T15", 5'd3, 32'h0000_0008, 2'b11, 2, cycles,
-                 32'hFFFF_FFFF, 1'b1);
-
-    // ==========================================================
-    // Test 16: back-to-back ADD stale carry regression.
-    // The first ADD makes the upper-half add overflow; the next ADD must still
-    // start its lower-half add with carry_in=0.
-    // ==========================================================
-    $display("\n---- Test 16: back-to-back ADD clears upper carry ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd5, 32'h0000_0000, 32'h0000_0010, 2'b10);
-    write_rf_64(5'd6, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    inject_two_instrs_no_gap(ADD_X3_X1_X2, ADD_X4_X5_X6, cycles, cycles_second);
-    check_result("T16A", 5'd3, 32'h0000_0000, 2'b10, 2, cycles,
-                 32'h0000_0000, 1'b1);
-    check_result("T16B", 5'd4, 32'h0000_0015, 2'b10, 2, cycles_second,
-                 32'h0000_0000, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d add tests complete", 16);
-    $display("==============================");
-
-
-    // ==========================================================
-    // SUB tests
-    // ==========================================================
-    $display("\n========== SUB tests ==========");
-
-    // SUB-1: tag00-tag00, no borrow. Pure 32-bit subtract, tag 00.
-    $display("\n---- SUB-1: tag00-tag00, no borrow ----");
-    write_rf_32(5'd1, 32'h0000_0005);
-    write_rf_32(5'd2, 32'h0000_0003);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S01", 5'd3, 32'h0000_0002, 2'b00, 1, cycles, 32'h0, 1'b0);
-
-    // SUB-2: tag00-tag00, borrow ignored for word-sized result.
-    $display("\n---- SUB-2: tag00-tag00, borrow ignored ----");
-    write_rf_32(5'd1, 32'h0000_0003);
-    write_rf_32(5'd2, 32'h0000_0005);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S02", 5'd3, 32'hFFFF_FFFE, 2'b11, 1, cycles, 32'hFFFF_FFFF, 1'b1);
-
-    // SUB-3: tag10-tag10, no borrow -> inferred zero upper, 1 cycle.
-    $display("\n---- SUB-3: tag10-tag10, no borrow ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0003, 2'b10);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S03", 5'd3, 32'h0000_0002, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // SUB-4: tag10-tag10, borrow -> inferred all-ones upper, 1 cycle.
-    $display("\n---- SUB-4: tag10-tag10, borrow ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b10);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S04", 5'd3, 32'hFFFF_FFFE, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // SUB-5: tag10-tag11, no borrow -> upper becomes 1, so 2 cycles.
-    $display("\n---- SUB-5: tag10-tag11, no borrow -> 2 cycles ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S05", 5'd3, 32'h0000_0002, 2'b01, 2, cycles, 32'h0000_0001, 1'b1);
-
-    // SUB-6: tag10-tag11, borrow -> upper remains zero, 1 cycle.
-    $display("\n---- SUB-6: tag10-tag11, borrow ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S06", 5'd3, 32'hFFFF_FFFE, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // SUB-7: tag11-tag10, no borrow -> inferred all-ones upper, 1 cycle.
-    $display("\n---- SUB-7: tag11-tag10, no borrow ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0005, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0003, 2'b10);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S07", 5'd3, 32'h0000_0002, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // SUB-8: tag11-tag10, borrow -> upper becomes FFFFFFFE, so 2 cycles.
-    $display("\n---- SUB-8: tag11-tag10, borrow -> 2 cycles ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0003, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S08", 5'd3, 32'hFFFF_FFFE, 2'b01, 2, cycles, 32'hFFFF_FFFE, 1'b1);
-
-    // SUB-9: explicit upper source -> 2 cycles, WB derives tag from actual upper zero.
-    $display("\n---- SUB-9: tag01-tag01, upper=0 -> tag 10 ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0005, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0003, 2'b01);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S09", 5'd3, 32'h0000_0002, 2'b10, 2, cycles, 32'h0000_0000, 1'b1);
-
-    // SUB-10: explicit upper source with borrow -> WB derives tag from actual upper all-ones.
-    $display("\n---- SUB-10: tag01-tag01, borrow upper=FF -> tag 11 ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0003, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b01);
-    inject_instr(SUB_X3_X1_X2, cycles);
-    check_result("S10", 5'd3, 32'hFFFF_FFFE, 2'b11, 2, cycles, 32'hFFFF_FFFF, 1'b1);
-
-    $display("\n==============================");
-    $display("All %0d SUB tests complete", 10);
-    $display("==============================");
-
-
-
-
-    // ==========================================================
-    // AND tests — bitwise, halves independent
-    // ==========================================================
-    $display("\n========== AND tests ==========");
-
-    // AND-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- AND-1: tag00+tag00 ----");
-    write_rf_32(5'd1, 32'hF0F0_F0F0);
-    write_rf_32(5'd2, 32'h0FF0_0FF0);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A01", 5'd3, 32'h00F0_00F0, 2'b00, 1, cycles, 32'h0, 1'b0);
-
-    // AND-2: tag10+tag10 → tag 10 (0 AND 0 = 0)
-    $display("\n---- AND-2: tag10+tag10 ----");
-    write_rf_64(5'd1, 32'h0, 32'hF0F0_F0F0, 2'b10);
-    write_rf_64(5'd2, 32'h0, 32'h0FF0_0FF0, 2'b10);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A02", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // AND-3: tag10+tag11 → tag 10 (0 AND FF = 0)
-    $display("\n---- AND-3: tag10+tag11 ----");
-    write_rf_64(5'd1, 32'h0,         32'hF0F0_F0F0, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A03", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // AND-4: tag11+tag11 → tag 11 (FF AND FF = FF)
-    $display("\n---- AND-4: tag11+tag11 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_F0F0, 2'b11);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A04", 5'd3, 32'h00F0_00F0, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // AND-5: tag01+tag10 → tag 10, 1 cycle (explicit AND 0 = 0; upper read skipped)
-    $display("\n---- AND-5: tag01+tag10 ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
-    write_rf_64(5'd2, 32'h0,         32'h0FF0_0FF0, 2'b10);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A05", 5'd3, 32'h00F0_00F0, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // AND-6: tag01+tag11 → tag 01, 2 cycles (FF AND explicit = explicit)
-    $display("\n---- AND-6: tag01+tag11 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b11);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A06", 5'd3, 32'h00F0_00F0, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // AND-7: tag01+tag01 → tag 01, 2 cycles
-    $display("\n---- AND-7: tag01+tag01 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_F0F0, 2'b01);
-    write_rf_64(5'd2, 32'hFF00_FF00, 32'h0FF0_0FF0, 2'b01);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A07", 5'd3, 32'h00F0_00F0, 2'b01, 2, cycles, 32'hAB00_1200, 1'b1);
-
-    // AND-8: tag01+tag01 producing all-ones upper → tag 11
-    $display("\n---- AND-8: tag01+tag01, upper=FF → tag 11 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_F0F0, 2'b01);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0FF0_0FF0, 2'b01);
-    inject_instr(AND_X3_X1_X2, cycles);
-    check_result("A08", 5'd3, 32'h00F0_00F0, 2'b11, 2, cycles, 32'hFFFF_FFFF, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d AND tests complete", 8);
-    $display("==============================");
-
-
-
-    // ==========================================================
-    // OR tests — bitwise, halves independent
-    // ==========================================================
-    $display("\n========== OR tests ==========");
-
-    // OR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- OR-1: tag00+tag00 ----");
-    write_rf_32(5'd1, 32'hF0F0_0000);
-    write_rf_32(5'd2, 32'h0000_0F0F);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
-
-    // OR-2: tag10+tag10 → tag 10 (0 OR 0 = 0)
-    $display("\n---- OR-2: tag10+tag10 ----");
-    write_rf_64(5'd1, 32'h0, 32'hF0F0_0000, 2'b10);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0F0F, 2'b10);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O02", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // OR-3: tag11+tag10 → tag 11 (FF OR 0 = FF)
-    $display("\n---- OR-3: tag11+tag10 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
-    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O03", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // OR-4: tag11+tag11 → tag 11 (FF OR FF = FF)
-    $display("\n---- OR-4: tag11+tag11 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O04", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // OR-5: tag01+tag11 → tag 11, 1 cycle (FF forces upper, no explicit read)
-    $display("\n---- OR-5: tag01+tag11 ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O05", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // OR-6: tag01+tag10 → tag 01, 2 cycles (explicit OR 0 = explicit)
-    $display("\n---- OR-6: tag01+tag10 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O06", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // OR-7: tag01+tag01 → tag 01, 2 cycles (general)
-    $display("\n---- OR-7: tag01+tag01 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0F0F, 2'b01);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O07", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hBBFD_567C, 1'b1);
-
-    // OR-8: tag01+tag01 producing all-zero upper → tag 10
-    $display("\n---- OR-8: tag01+tag01, upper=0 → tag 10 ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0F0F, 2'b01);
-    inject_instr(OR_X3_X1_X2, cycles);
-    check_result("O08", 5'd3, 32'hF0F0_0F0F, 2'b10, 2, cycles, 32'h0000_0000, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d OR tests complete", 8);
-    $display("==============================");
-
-
-
-    // ==========================================================
-    // XOR tests — bitwise, halves independent; explicit always 2-cycle
-    // ==========================================================
-    $display("\n========== XOR tests ==========");
-
-    // XOR-1: tag00+tag00 → tag 00, 1 cycle (pure RV32)
-    $display("\n---- XOR-1: tag00+tag00 ----");
-    write_rf_32(5'd1, 32'hF0F0_0000);
-    write_rf_32(5'd2, 32'h0000_0F0F);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X01", 5'd3, 32'hF0F0_0F0F, 2'b00, 1, cycles, 32'h0, 1'b0);
-
-    // XOR-2: tag10+tag10 → tag 10 (0 XOR 0 = 0)
-    $display("\n---- XOR-2: tag10+tag10 ----");
-    write_rf_64(5'd1, 32'h0, 32'hF0F0_0000, 2'b10);
-    write_rf_64(5'd2, 32'h0, 32'h0000_0F0F, 2'b10);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X02", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // XOR-3: tag11+tag11 → tag 10 (FF XOR FF = 0)
-    $display("\n---- XOR-3: tag11+tag11 → tag 10 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF0F0_0000, 2'b11);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X03", 5'd3, 32'hF0F0_0F0F, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // XOR-4: tag10+tag11 → tag 11 (0 XOR FF = FF)
-    $display("\n---- XOR-4: tag10+tag11 ----");
-    write_rf_64(5'd1, 32'h0,         32'hF0F0_0000, 2'b10);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X04", 5'd3, 32'hF0F0_0F0F, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // XOR-5: tag01+tag10 → tag 01, 2 cycles (any explicit forces 2-cycle XOR)
-    $display("\n---- XOR-5: tag01+tag10 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0,         32'h0000_0F0F, 2'b10);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X05", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // XOR-6: tag01+tag11 → tag 01, 2 cycles
-    $display("\n---- XOR-6: tag01+tag11 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'hFFFF_FFFF, 32'h0000_0F0F, 2'b11);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X06", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'h5432_EDCB, 1'b1);
-
-    // XOR-7: tag01+tag01 → tag 01, 2 cycles (general)
-    $display("\n---- XOR-7: tag01+tag01 → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'hF0F0_0000, 2'b01);
-    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0F0F, 2'b01);
-    inject_instr(XOR_X3_X1_X2, cycles);
-    check_result("X07", 5'd3, 32'hF0F0_0F0F, 2'b01, 2, cycles, 32'hB9F9_444C, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d XOR tests complete", 7);
-    $display("==============================");
-
-
-
-
-    // ==========================================================
-    // ADDI tests — I-type adder, immediate's tag derived from imm[31]
-    // ==========================================================
-    $display("\n========== ADDI tests ==========");
-
-    // ADDI-1: rs1 tag10 + pos_imm (virtual tag 10), no carry → tag 10
-    $display("\n---- ADDI-1: tag10+pos_imm ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0010, 2'b10);
-    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
-    check_result("AI1", 5'd3, 32'h0000_0015, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // ADDI-2: rs1 tag11 + pos_imm (10), no carry → tag 11 (FF+0+0=FF)
-    $display("\n---- ADDI-2: tag11+pos_imm ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0010, 2'b11);
-    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
-    check_result("AI2", 5'd3, 32'h0000_0015, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ADDI-3: rs1 tag10 + neg_imm (11), carry → tag 10 (0+FF+1=00)
-    $display("\n---- ADDI-3: tag10+neg_imm, carry ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0010, 2'b10);
-    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("AI3", 5'd3, 32'h0000_000F, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // ADDI-4: rs1 tag10 + neg_imm (11), no carry → tag 11 (0+FF+0=FF)
-    $display("\n---- ADDI-4: tag10+neg_imm, no carry ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0000, 2'b10);
-    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("AI4", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ADDI-5: rs1 tag11 + neg_imm (11), no carry → 2 cycles (FF+FF+0=FE, not inferable)
-    $display("\n---- ADDI-5: tag11+neg_imm, no carry → 2 cycles ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0000, 2'b11);
-    inject_instr(ADDI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("AI5", 5'd3, 32'hFFFF_FFFF, 2'b01, 2, cycles, 32'hFFFF_FFFE, 1'b1);
-
-    // ADDI-6: rs1 tag01 + pos_imm (10) → 2 cycles (a explicit forces upper read)
-    $display("\n---- ADDI-6: tag01+pos_imm → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_0000, 32'h0000_0010, 2'b01);
-    inject_instr(ADDI_X3_X1_POS, cycles);    // imm = +5
-    check_result("AI6", 5'd3, 32'h0000_0015, 2'b01, 2, cycles, 32'hABCD_0000, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d ADDI tests complete", 6);
-    $display("==============================");
-
-
-
-    // ==========================================================
-    // ANDI tests — I-type bitwise AND
-    // ==========================================================
-    $display("\n========== ANDI tests ==========");
-
-    // ANDI-1: rs1 tag10 + pos_imm (10) → tag 10
-    $display("\n---- ANDI-1: tag10+pos_imm ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_001F, 2'b10);
-    inject_instr(ANDI_X3_X1_POS, cycles);    // imm = +5
-    check_result("NI1", 5'd3, 32'h0000_0005, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // ANDI-2: rs1 tag11 + neg_imm (11) → tag 11 (FF AND FF = FF)
-    $display("\n---- ANDI-2: tag11+neg_imm ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_001F, 2'b11);
-    inject_instr(ANDI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("NI2", 5'd3, 32'h0000_001F, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ANDI-3: rs1 tag01 + pos_imm (10) → tag 10, 1 cycle (zero side forces result)
-    $display("\n---- ANDI-3: tag01+pos_imm → 1 cycle ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_001F, 2'b01);
-    inject_instr(ANDI_X3_X1_POS, cycles);    // imm = +5
-    check_result("NI3", 5'd3, 32'h0000_0005, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // ANDI-4: rs1 tag01 + neg_imm (11) → tag 01, 2 cycles (need explicit upper)
-    $display("\n---- ANDI-4: tag01+neg_imm → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_001F, 2'b01);
-    inject_instr(ANDI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("NI4", 5'd3, 32'h0000_001F, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d ANDI tests complete", 4);
-    $display("==============================");
-
-
-
-    // ==========================================================
-    // ORI tests — I-type bitwise OR
-    // ==========================================================
-    $display("\n========== ORI tests ==========");
-
-    // ORI-1: rs1 tag10 + pos_imm (10) → tag 10 (0 OR 0 = 0)
-    $display("\n---- ORI-1: tag10+pos_imm ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
-    inject_instr(ORI_X3_X1_POS, cycles);     // imm = +5
-    check_result("RI1", 5'd3, 32'h0000_0017, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // ORI-2: rs1 tag10 + neg_imm (11) → tag 11 (0 OR FF = FF)
-    $display("\n---- ORI-2: tag10+neg_imm ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
-    inject_instr(ORI_X3_X1_NEG, cycles);     // imm = -1
-    check_result("RI2", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ORI-3: rs1 tag01 + neg_imm (11) → tag 11, 1 cycle (FF forces result)
-    $display("\n---- ORI-3: tag01+neg_imm → 1 cycle ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
-    inject_instr(ORI_X3_X1_NEG, cycles);     // imm = -1
-    check_result("RI3", 5'd3, 32'hFFFF_FFFF, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ORI-4: rs1 tag01 + pos_imm (10) → tag 01, 2 cycles
-    $display("\n---- ORI-4: tag01+pos_imm → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
-    inject_instr(ORI_X3_X1_POS, cycles);     // imm = +5
-    check_result("RI4", 5'd3, 32'h0000_0017, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d ORI tests complete", 4);
-    $display("==============================");
-
-
-
-
-    // ==========================================================
-    // XORI tests — I-type bitwise XOR
-    // ==========================================================
-    $display("\n========== XORI tests ==========");
-
-    // XORI-1: rs1 tag10 + pos_imm (10) → tag 10 (0 XOR 0 = 0)
-    $display("\n---- XORI-1: tag10+pos_imm ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
-    inject_instr(XORI_X3_X1_POS, cycles);    // imm = +5
-    check_result("XI1", 5'd3, 32'h0000_0017, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // XORI-2: rs1 tag11 + neg_imm (11) → tag 10 (FF XOR FF = 0)
-    $display("\n---- XORI-2: tag11+neg_imm → tag 10 ----");
-    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'h0000_0012, 2'b11);
-    inject_instr(XORI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("XI2", 5'd3, 32'hFFFF_FFED, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // XORI-3: rs1 tag10 + neg_imm (11) → tag 11 (0 XOR FF = FF)
-    $display("\n---- XORI-3: tag10+neg_imm → tag 11 ----");
-    write_rf_64(5'd1, 32'h0, 32'h0000_0012, 2'b10);
-    inject_instr(XORI_X3_X1_NEG, cycles);    // imm = -1
-    check_result("XI3", 5'd3, 32'hFFFF_FFED, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // XORI-4: rs1 tag01 + pos_imm (10) → tag 01, 2 cycles (any explicit forces 2-cycle)
-    $display("\n---- XORI-4: tag01+pos_imm → 2 cycles ----");
-    write_rf_64(5'd1, 32'hABCD_1234, 32'h0000_0012, 2'b01);
-    inject_instr(XORI_X3_X1_POS, cycles);    // imm = +5
-    check_result("XI4", 5'd3, 32'h0000_0017, 2'b01, 2, cycles, 32'hABCD_1234, 1'b1);
-
-    // ==========================================================
-    // Done
-    // ==========================================================
-    $display("\n==============================");
-    $display("All %0d XORI tests complete", 4);
-    $display("==============================");
-
-
-    // ==========================================================
-    // Compare tests — tag-aware 64-bit SLT/SLTU/SLTI/SLTIU
-    // ==========================================================
-    $display("\n========== COMPARE tests ==========");
-
-    // Equal inferred uppers: lower half must be compared unsigned, even for signed SLT.
-    $display("\n---- CMP-1: SLT equal inferred uppers, lower unsigned decides false ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'hffff_ffff, 2'b10);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0000, 2'b10);
-    inject_instr(SLT_X3_X1_X2, cycles);
-    check_result("C01", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // Signed compare with inferred uppers different: upper sign decides.
-    $display("\n---- CMP-2: SLT inferred upper -1 < 0 ----");
-    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
-    inject_instr(SLT_X3_X1_X2, cycles);
-    check_result("C02", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // Unsigned compare with inferred uppers different: upper magnitude decides.
-    $display("\n---- CMP-3: SLTU inferred upper FFFFFFFF > 0 ----");
-    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
-    inject_instr(SLTU_X3_X1_X2, cycles);
-    check_result("C03", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // Explicit equal uppers require a lower-cycle compare; lower remains unsigned for signed SLT.
-    $display("\n---- CMP-4: SLT explicit equal uppers, lower unsigned decides false ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'hffff_ffff, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    inject_instr(SLT_X3_X1_X2, cycles);
-    check_result("C04", 5'd3, 32'h0000_0000, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Explicit different uppers can complete from the upper compare alone.
-    $display("\n---- CMP-5: SLT explicit upper 0 < 1 ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'hffff_ffff, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    inject_instr(SLT_X3_X1_X2, cycles);
-    check_result("C05", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // SLTI uses the sign-extended immediate as the inferred upper half.
-    $display("\n---- CMP-6: SLTI 0 < -1 is false ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
-    inject_instr(SLTI_X3_X1_NEG, cycles);
-    check_result("C06", 5'd3, 32'h0000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    // SLTIU compares the sign-extended immediate as a 64-bit unsigned value.
-    $display("\n---- CMP-7: SLTIU 0 < -1 is true ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
-    inject_instr(SLTIU_X3_X1_NEG, cycles);
-    check_result("C07", 5'd3, 32'h0000_0001, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n==============================");
-    $display("All %0d COMPARE tests complete", 7);
-    $display("==============================");
-
-
-    // ==========================================================
-    // Branch compare tests
-    // ==========================================================
-    $display("\n========== BRANCH compare tests ==========");
-
-    $display("\n---- BR-1: BEQ inferred equal, taken ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    inject_instr(BEQ_X1_X2, cycles);
-    check_cycles_only("B01", 2, cycles);
-
-    $display("\n---- BR-2: BNE inferred upper differs, taken ----");
-    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0005, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0005, 2'b10);
-    inject_instr(BNE_X1_X2, cycles);
-    check_cycles_only("B02", 2, cycles);
-
-    $display("\n---- BR-3: BLT inferred signed upper -1 < 0, taken ----");
-    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
-    inject_instr(BLT_X1_X2, cycles);
-    check_cycles_only("B03", 2, cycles);
-
-    $display("\n---- BR-4: BGE inferred signed upper 0 >= -1, taken ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
-    write_rf_64(5'd2, 32'hffff_ffff, 32'hffff_ffff, 2'b11);
-    inject_instr(BGE_X1_X2, cycles);
-    check_cycles_only("B04", 2, cycles);
-
-    $display("\n---- BR-5: BLTU inferred upper FFFFFFFF < 0 is false ----");
-    write_rf_64(5'd1, 32'hffff_ffff, 32'h0000_0000, 2'b11);
-    write_rf_64(5'd2, 32'h0000_0000, 32'hffff_ffff, 2'b10);
-    inject_instr(BLTU_X1_X2, cycles);
-    check_cycles_only("B05", 1, cycles);
-
-    $display("\n---- BR-6: BGEU explicit equal uppers, lower decides taken ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'hffff_ffff, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    inject_instr(BGEU_X1_X2, cycles);
-    check_cycles_only("B06", 3, cycles);
-
-    $display("\n==============================");
-    $display("All %0d BRANCH compare tests complete", 6);
-    $display("==============================");
-
-    // ==========================================================
-    // W-variant tests
-    // ==========================================================
-    $display("\n========== W-variant tests ==========");
-
-    // ADDIW wraps to 32 bits and sign-extends bit 31 into the tag.
-    $display("\n---- W-1: ADDIW 0 + -1 -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h0000_0000, 2'b01);
-    inject_instr(ADDIW_X3_X1_NEG, cycles);
-    check_result("W01", 5'd3, 32'hffff_ffff, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // ADDW ignores source upper halves and sign-extends the 32-bit wrapped result.
-    $display("\n---- W-2: ADDW overflow -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h7fff_ffff, 2'b01);
-    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0001, 2'b01);
-    inject_instr(ADDW_X3_X1_X2, cycles);
-    check_result("W02", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    // SUBW underflow likewise wraps in 32 bits and sign-extends.
-    $display("\n---- W-3: SUBW underflow -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h1234_5678, 32'h0000_0001, 2'b01);
-    inject_instr(SUBW_X3_X1_X2, cycles);
-    check_result("W03", 5'd3, 32'hffff_ffff, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-4: SLLIW sets sign bit -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h4000_0000, 2'b01);
-    inject_instr(SLLIW_X3_X1_1, cycles);
-    check_result("W04", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-5: SRLIW clears sign bit -> tag 10 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
-    inject_instr(SRLIW_X3_X1_1, cycles);
-    check_result("W05", 5'd3, 32'h4000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-6: SRAIW preserves sign bit -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
-    inject_instr(SRAIW_X3_X1_1, cycles);
-    check_result("W06", 5'd3, 32'hc000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-7: SLLW uses lower shamt only -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h4000_0000, 2'b01);
-    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
-    inject_instr(SLLW_X3_X1_X2, cycles);
-    check_result("W07", 5'd3, 32'h8000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-8: SRLW uses lower shamt only -> tag 10 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
-    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
-    inject_instr(SRLW_X3_X1_X2, cycles);
-    check_result("W08", 5'd3, 32'h4000_0000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- W-9: SRAW uses lower shamt only -> tag 11 ----");
-    write_rf_64(5'd1, 32'haaaa_5555, 32'h8000_0000, 2'b01);
-    write_rf_64(5'd2, 32'hffff_ffff, 32'h0000_0001, 2'b11);
-    inject_instr(SRAW_X3_X1_X2, cycles);
-    check_result("W09", 5'd3, 32'hc000_0000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n==============================");
-    $display("All %0d W-variant tests complete", 9);
-    $display("==============================");
-
-    // ==========================================================
-    // RV64 shift tests
-    // ==========================================================
-    $display("\n========== RV64 shift tests ==========");
-
-    $display("\n---- SH-1: SLL cross-half shift ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'h8000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
-    inject_instr(SLL_X3_X1_X2, cycles);
-    check_result("SH01", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0003, 1'b1);
-
-    $display("\n---- SH-2: SLLI shamt[5] path ----");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0012, 2'b10);
-    inject_instr(SLLI_X3_X1_36, cycles);
-    check_result("SH02", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0120, 1'b1);
-
-    $display("\n---- SH-3: SRL cross-half shift ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
-    inject_instr(SRL_X3_X1_X2, cycles);
-    check_result("SH03", 5'd3, 32'h8000_0000, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
-
-    $display("\n---- SH-4: SRA cross-half shift ----");
-    write_rf_64(5'd1, 32'h8000_0000, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
-    inject_instr(SRA_X3_X1_X2, cycles);
-    check_result("SH04", 5'd3, 32'h0000_0000, 2'b01, 3, cycles, 32'hc000_0000, 1'b1);
-
-    $display("\n---- SH-5: SRLI shamt >= 32 reads upper first ----");
-    write_rf_64(5'd1, 32'h1234_5678, 32'h89ab_cdef, 2'b01);
-    inject_instr(SRLI_X3_X1_36, cycles);
-    check_result("SH05", 5'd3, 32'h0123_4567, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- SH-6: SRAI shamt >= 32 sign-fills upper ----");
-    write_rf_64(5'd1, 32'h9234_5678, 32'h89ab_cdef, 2'b01);
-    inject_instr(SRAI_X3_X1_36, cycles);
-    check_result("SH06", 5'd3, 32'hf923_4567, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- SH-7: SLLI zero shift copies explicit upper ----");
-    write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
-    inject_instr(SLLI_X3_X1_0, cycles);
-    check_result("SH07", 5'd3, 32'h9abc_def0, 2'b01, 2, cycles, 32'h1234_5678, 1'b1);
-
-    $display("\n---- SH-8: SLL rd==rs1 keeps original source halves ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'h8000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
-    inject_instr(SLL_X1_X1_X2, cycles);
-    check_result("SH08", 5'd1, 32'h0000_0000, 2'b01, 3, cycles, 32'h0000_0003, 1'b1);
-
-    $display("\n---- SH-9: SRL rd==rs2 keeps original shamt ----");
-    write_rf_64(5'd1, 32'h0000_0001, 32'h0000_0000, 2'b01);
-    write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
-    inject_instr(SRL_X2_X1_X2, cycles);
-    check_result("SH09", 5'd2, 32'h8000_0000, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
-
-    $display("\n==============================");
-    $display("All %0d RV64 shift tests complete", 9);
-    $display("==============================");
-
-    // ==========================================================
-    // PC-producing instruction tag tests
-    // ==========================================================
-    $display("\n========== PC-producing instruction tests ==========");
-
-    $display("\n---- PC-1: LUI positive tags zero-extended upper ----");
-    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
-    inject_instr(LUI_X3_POS, cycles);
-    check_result("P01", 5'd3, 32'h7ffff000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- PC-2: LUI negative tags sign-filled upper ----");
-    inject_instr(LUI_X3_NEG, cycles);
-    check_result("P02", 5'd3, 32'h80000000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- PC-3: AUIPC no carry stays inferred zero ----");
-    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
-    inject_instr(AUIPC_X3_1, cycles);
-    check_result("P03", 5'd3, 32'h00002000, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- PC-4: AUIPC carry writes explicit upper ----");
-    set_pc64(32'hffff_f000, 32'h0000_0000, 2'b10);
-    inject_instr(AUIPC_X3_1, cycles);
-    check_result("P04", 5'd3, 32'h00000000, 2'b01, 2, cycles, 32'h00000001, 1'b1);
-
-    $display("\n---- PC-5: AUIPC explicit PC upper takes upper cycle ----");
-    set_pc64(32'h0000_1000, 32'h1234_5678, 2'b01);
-    inject_instr(AUIPC_X3_2, cycles);
-    check_result("P05", 5'd3, 32'h00003000, 2'b01, 2, cycles, 32'h12345678, 1'b1);
-
-    $display("\n---- PC-6: AUIPC negative immediate tags sign-filled upper ----");
-    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
-    inject_instr(AUIPC_X3_NEG, cycles);
-    check_result("P06", 5'd3, 32'hfffff000, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-    $display("\n---- PC-7: JAL link no carry stays inferred zero ----");
-    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
-    inject_instr(JAL_X3_0, cycles);
-    check_result("P07", 5'd3, 32'h00001004, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    $display("\n---- PC-8: JAL link carry writes explicit upper ----");
-    set_pc64(32'hffff_fffc, 32'h0000_0000, 2'b10);
-    inject_instr(JAL_X3_0, cycles);
-    check_result("P08", 5'd3, 32'h00000000, 2'b01, 3, cycles, 32'h00000001, 1'b1);
-
-    $display("\n---- PC-9: JALR link explicit PC upper takes upper cycle ----");
-    set_pc64(32'h0000_0008, 32'h1234_5678, 2'b01);
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0040, 2'b10);
-    inject_instr(JALR_X3_X1_0, cycles);
-    check_result("P09", 5'd3, 32'h0000000c, 2'b01, 3, cycles, 32'h12345678, 1'b1);
-
-    $display("\n---- PC-10: JALR explicit base drives 64-bit target ----");
-    set_pc64(32'h0000_1000, 32'h0000_0000, 2'b10);
-    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0040, 2'b01);
-    inject_instr_capture_target(JALR_X3_X1_0, cycles, captured_pc_target);
-    check_addr64("P10 target", captured_pc_target, 64'h1234_5678_0000_0040);
-    check_result("P10", 5'd3, 32'h00001004, 2'b10, 3, cycles, 32'h0, 1'b0);
-
-    set_pc64(32'h0000_0000, 32'h0000_0000, 2'b10);
-
-    $display("\n==============================");
-    $display("All %0d PC-producing instruction tests complete", 10);
-    $display("==============================");
-
-    // ==========================================================
-    // CSR/no-CSR tests
-    // ==========================================================
-    if (EnableCSRs) begin
-      $display("\n========== CSR width tests ==========");
-
-      $display("\n---- CSRFILE-1: MISA reports RV64 MXL ----");
-      csr64_read_check("CSRFILE01 MISA", CSR_MISA, 64'h8000_0000_0010_1104);
-
-      $display("\n---- CSRFILE-2: MSCRATCH stores full 64-bit value ----");
-      csr64_write(CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
-      csr64_read_check("CSRFILE02 MSCRATCH", CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
-
-      $display("\n---- CSRFILE-3: MEPC write stores full 64-bit aligned value ----");
-      csr64_write(CSR_MEPC, 64'h0fed_cba9_8765_4321);
-      csr64_read_check("CSRFILE03 MEPC", CSR_MEPC, 64'h0fed_cba9_8765_4320);
-      check_value64("CSRFILE03 MEPC output", csr64_mepc_o, 64'h0fed_cba9_8765_4320);
-
-      $display("\n---- CSRFILE-4: exception save captures 64-bit PC and mtval ----");
-      csr64_save_id_exception(64'hfeed_cafe_0000_0042, 64'hdead_beef_1234_5678);
-      check_value64("CSRFILE04 MEPC output", csr64_mepc_o, 64'hfeed_cafe_0000_0042);
-      csr64_read_check("CSRFILE04 MTVAL", CSR_MTVAL, 64'hdead_beef_1234_5678);
-
-      $display("\n---- CSR-1: CSR read with zero upper tags 10 ----");
-      inject_csr(CSRRS_X3_MEPC_X0, 64'h0000_0000_1122_3344, cycles);
-      check_result("CSR01", 5'd3, 32'h1122_3344, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-      $display("\n---- CSR-2: CSR read with ones upper tags 11 ----");
-      inject_csr(CSRRS_X3_MEPC_X0, 64'hffff_ffff_89ab_cdef, cycles);
-      check_result("CSR02", 5'd3, 32'h89ab_cdef, 2'b11, 1, cycles, 32'h0, 1'b0);
-
-      $display("\n---- CSR-3: CSR read with explicit upper takes upper cycle ----");
-      inject_csr(CSRRS_X3_MISA_X0, 64'h8000_0000_0010_1104, cycles);
-      check_result("CSR03", 5'd3, 32'h0010_1104, 2'b01, 2, cycles, 32'h8000_0000, 1'b1);
-
-      $display("\n---- CSR-4: CSRRW uses explicit 64-bit source operand ----");
-      write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
-      inject_csr_capture_wdata(CSRRW_X3_MEPC_X1, 64'h0000_0000_5566_7788,
-                               cycles, captured_csr_wdata);
-      check_value64("CSR04 wdata", captured_csr_wdata, 64'h1234_5678_9abc_def0);
-      check_result("CSR04", 5'd3, 32'h5566_7788, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-      $display("\n---- CSR-5: CSRRWI zero-extends immediate to 64-bit write data ----");
-      inject_csr_capture_wdata(CSRRWI_X3_MEPC_5, 64'h0000_0000_aabb_ccdd,
-                               cycles, captured_csr_wdata);
-      check_value64("CSR05 wdata", captured_csr_wdata, 64'h0000_0000_0000_0005);
-      check_result("CSR05", 5'd3, 32'haabb_ccdd, 2'b10, 1, cycles, 32'h0, 1'b0);
-
-      $display("\n==============================");
-      $display("All %0d CSR width tests complete", 9);
-      $display("==============================");
-    end else begin
-      $display("\n========== No-CSR decode tests ==========");
-      inject_illegal_instr_check("NOCSR01 CSRRS", CSRRS_X3_MEPC_X0);
-      inject_illegal_instr_check("NOCSR02 MRET", MRET_INSN);
-      $display("\n==============================");
-      $display("No-CSR decode tests complete");
-      $display("==============================");
-    end
-
-
-    // ==========================================================
-    // LOAD tag tests
-    // ==========================================================
-    $display("\n========== LOAD tag tests ==========");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
-
-    // Signed byte with positive sign bit -> zero-inferred upper.
-    $display("\n---- LOAD-1: LB positive ----");
-    inject_load(LB_X3_0_X1, 32'h0000_007f, cycles);
-    check_result("L01", 5'd3, 32'h0000_007f, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Signed byte with negative sign bit -> ones-inferred upper.
-    $display("\n---- LOAD-2: LB negative ----");
-    inject_load(LB_X3_0_X1, 32'h0000_0080, cycles);
-    check_result("L02", 5'd3, 32'hffff_ff80, 2'b11, 2, cycles, 32'h0, 1'b0);
-
-    // Unsigned byte always zero-extends, even when bit 7 is set.
-    $display("\n---- LOAD-3: LBU high bit set ----");
-    inject_load(LBU_X3_0_X1, 32'h0000_0080, cycles);
-    check_result("L03", 5'd3, 32'h0000_0080, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Signed halfword with positive sign bit -> zero-inferred upper.
-    $display("\n---- LOAD-4: LH positive ----");
-    inject_load(LH_X3_0_X1, 32'h0000_7fff, cycles);
-    check_result("L04", 5'd3, 32'h0000_7fff, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Signed halfword with negative sign bit -> ones-inferred upper.
-    $display("\n---- LOAD-5: LH negative ----");
-    inject_load(LH_X3_0_X1, 32'h0000_8001, cycles);
-    check_result("L05", 5'd3, 32'hffff_8001, 2'b11, 2, cycles, 32'h0, 1'b0);
-
-    // Unsigned halfword always zero-extends, even when bit 15 is set.
-    $display("\n---- LOAD-6: LHU high bit set ----");
-    inject_load(LHU_X3_0_X1, 32'h0000_8001, cycles);
-    check_result("L06", 5'd3, 32'h0000_8001, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Signed word with positive sign bit -> zero-inferred upper.
-    $display("\n---- LOAD-7: LW positive ----");
-    inject_load(LW_X3_0_X1, 32'h7fff_ffff, cycles);
-    check_result("L07", 5'd3, 32'h7fff_ffff, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    // Signed word with negative sign bit -> ones-inferred upper.
-    $display("\n---- LOAD-8: LW negative ----");
-    inject_load(LW_X3_0_X1, 32'h8000_0000, cycles);
-    check_result("L08", 5'd3, 32'h8000_0000, 2'b11, 2, cycles, 32'h0, 1'b0);
-
-    // LWU zero-extends, so tag stays zero-inferred even when bit 31 is set.
-    $display("\n---- LOAD-9: LWU high bit set ----");
-    inject_load(LWU_X3_0_X1, 32'h8000_0000, cycles);
-    check_result("L09", 5'd3, 32'h8000_0000, 2'b10, 2, cycles, 32'h0, 1'b0);
-
-    $display("\n==============================");
-    $display("All %0d LOAD tag tests complete", 9);
-    $display("==============================");
-
-    // ==========================================================
-    // LD/SD tests
-    // ==========================================================
-    $display("\n========== LD/SD tests ==========");
-    write_rf_64(5'd1, 32'h0000_0000, 32'h0000_0000, 2'b10);
-
-    // LD writes lower first, then upper. Upper zero is compressed as tag 10.
-    $display("\n---- LD-1: upper zero -> tag 10 ----");
-    inject_ld(LD_X3_0_X1, 32'h89ab_cdef, 32'h0000_0000, cycles);
-    check_result("D01", 5'd3, 32'h89ab_cdef, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
-
-    // Upper all ones is compressed as tag 11.
-    $display("\n---- LD-2: upper ones -> tag 11 ----");
-    inject_ld(LD_X3_0_X1, 32'h0123_4567, 32'hffff_ffff, cycles);
-    check_result("D02", 5'd3, 32'h0123_4567, 2'b11, 3, cycles, 32'hffff_ffff, 1'b1);
-
-    // General upper word remains explicit.
-    $display("\n---- LD-3: explicit upper -> tag 01 ----");
-    inject_ld(LD_X3_0_X1, 32'hfeed_beef, 32'h1234_5678, cycles);
-    check_result("D03", 5'd3, 32'hfeed_beef, 2'b01, 3, cycles, 32'h1234_5678, 1'b1);
-
-    // SD with zero-inferred upper stores zero as the second word.
-    $display("\n---- SD-1: tag10 stores inferred upper zero ----");
-    write_rf_64(5'd2, 32'h0000_0000, 32'hcafe_babe, 2'b10);
-    inject_sd(SD_X2_0_X1, cycles,
-              sd_lower_addr, sd_lower_wdata, sd_lower_be,
-              sd_upper_addr, sd_upper_wdata, sd_upper_be);
-    check_sd_result("D04", 32'hcafe_babe, 32'h0000_0000,
-                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
-                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
-                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
-
-    // SD with ones-inferred upper stores all ones as the second word.
-    $display("\n---- SD-2: tag11 stores inferred upper ones ----");
-    write_rf_64(5'd2, 32'hffff_ffff, 32'h1357_9bdf, 2'b11);
-    inject_sd(SD_X2_0_X1, cycles,
-              sd_lower_addr, sd_lower_wdata, sd_lower_be,
-              sd_upper_addr, sd_upper_wdata, sd_upper_be);
-    check_sd_result("D05", 32'h1357_9bdf, 32'hffff_ffff,
-                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
-                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
-                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
-
-    // SD with explicit upper reads the upper RF bank for the second word.
-    $display("\n---- SD-3: tag01 stores explicit upper ----");
-    write_rf_64(5'd2, 32'h1234_5678, 32'h0bad_f00d, 2'b01);
-    inject_sd(SD_X2_0_X1, cycles,
-              sd_lower_addr, sd_lower_wdata, sd_lower_be,
-              sd_upper_addr, sd_upper_wdata, sd_upper_be);
-    check_sd_result("D06", 32'h0bad_f00d, 32'h1234_5678,
-                    64'h0000_0000_0000_0000, 64'h0000_0000_0000_0004,
-                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
-                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 3, cycles);
-
-    // SD with an explicit-upper base takes one address cycle before issuing the lower store.
-    $display("\n---- SD-4: tag01 base drives 64-bit store addresses ----");
-    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0020, 2'b01);
-    write_rf_64(5'd2, 32'h89ab_cdef, 32'h7654_3210, 2'b01);
-    inject_sd_explicit_addr(SD_X2_0_X1, cycles,
-                            sd_lower_addr, sd_lower_wdata, sd_lower_be,
-                            sd_upper_addr, sd_upper_wdata, sd_upper_be);
-    check_sd_result("D07", 32'h7654_3210, 32'h89ab_cdef,
-                    64'h1234_5678_0000_0020, 64'h1234_5678_0000_0024,
-                    sd_lower_addr, sd_lower_wdata, sd_lower_be,
-                    sd_upper_addr, sd_upper_wdata, sd_upper_be, 4, cycles);
-
-    $display("\n==============================");
-    $display("All %0d LD/SD tests complete", 7);
-    $display("==============================");
-
-    $display("\n========== 64-bit address path tests ==========");
-
-    $display("\n---- ADDR-1: explicit base drives 64-bit load address ----");
-    write_rf_64(5'd1, 32'h1234_5678, 32'h0000_0000, 2'b01);
-    inject_load_explicit_addr(LW_X3_0_X1, 32'h1122_3344, cycles, captured_load_addr);
-    check_addr64("ADDR1", captured_load_addr, 64'h1234_5678_0000_0000);
-    check_result("ADDR1", 5'd3, 32'h11223344, 2'b10, 3, cycles, 32'h0, 1'b0);
-
-    $display("\n==============================");
-    $display("All %0d 64-bit address path tests complete", 1);
-    $display("==============================");
-
-
-    repeat (10) @(posedge clk_i);
-    $stop;
   end
 
-  // --------------------
-  // Optional: waveform dump for debugging
-  // --------------------
   initial begin
-    $dumpfile("testbench.vcd");
-    $dumpvars(0, testbench);
+    int cycles;
+
+    errors = 0;
+    preload_we = 1'b0;
+    preload_waddr = 5'h0;
+    preload_wdata = 64'h0;
+    instr_valid_i = 1'b0;
+    instr_rdata_i = NOP;
+    set_pc64(64'h0000_0000_0000_1000);
+    for (int i = 0; i < 256; i++) data_mem[i] = 32'h0;
+
+    @(posedge rst_ni);
+    repeat (3) @(posedge clk_i);
+
+    clear_regs();
+
+    write_rf64(5'd1, 64'h1000_2000_0000_0003);
+    write_rf64(5'd2, 64'h0000_0000_0000_0005);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b000, 5'd3, 7'b0110011), cycles);
+    check_reg("ADD64", 5'd3, 64'h1000_2000_0000_0008);
+
+    write_rf64(5'd1, 64'hffff_ffff_ffff_ffff);
+    write_rf64(5'd2, 64'h0000_0000_0000_0001);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b000, 5'd3, 7'b0110011), cycles);
+    check_reg("ADD64_WRAP", 5'd3, 64'h0000_0000_0000_0000);
+
+    write_rf64(5'd1, 64'h0000_0001_0000_0000);
+    write_rf64(5'd2, 64'h0000_0000_0000_0001);
+    run_instr(enc_r(7'b0100000, 5'd2, 5'd1, 3'b000, 5'd3, 7'b0110011), cycles);
+    check_reg("SUB64_BORROW", 5'd3, 64'h0000_0000_ffff_ffff);
+
+    write_rf64(5'd1, 64'hff00_ff00_1234_5678);
+    write_rf64(5'd2, 64'h0f0f_0f0f_ffff_0000);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b111, 5'd3, 7'b0110011), cycles);
+    check_reg("AND64", 5'd3, 64'h0f00_0f00_1234_0000);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b110, 5'd3, 7'b0110011), cycles);
+    check_reg("OR64", 5'd3, 64'hff0f_ff0f_ffff_5678);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b100, 5'd3, 7'b0110011), cycles);
+    check_reg("XOR64", 5'd3, 64'hf00f_f00f_edcb_5678);
+
+    write_rf64(5'd1, 64'h0);
+    run_instr(enc_i(12'hfff, 5'd1, 3'b000, 5'd3, 7'b0010011), cycles);
+    check_reg("ADDI_SIGNEXT", 5'd3, 64'hffff_ffff_ffff_ffff);
+
+    write_rf64(5'd1, 64'hffff_ffff_ffff_ffff);
+    write_rf64(5'd2, 64'h0000_0000_0000_0001);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b010, 5'd3, 7'b0110011), cycles);
+    check_reg("SLT64", 5'd3, 64'h1);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b011, 5'd3, 7'b0110011), cycles);
+    check_reg("SLTU64", 5'd3, 64'h0);
+
+    write_rf64(5'd1, 64'h0000_0001_0000_0000);
+    write_rf64(5'd2, 64'd4);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b001, 5'd3, 7'b0110011), cycles);
+    check_reg("SLL64", 5'd3, 64'h0000_0010_0000_0000);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd3, 3'b101, 5'd4, 7'b0110011), cycles);
+    check_reg("SRL64", 5'd4, 64'h0000_0001_0000_0000);
+    write_rf64(5'd1, 64'h8000_0000_0000_0000);
+    write_rf64(5'd2, 64'd4);
+    run_instr(enc_r(7'b0100000, 5'd2, 5'd1, 3'b101, 5'd3, 7'b0110011), cycles);
+    check_reg("SRA64", 5'd3, 64'hf800_0000_0000_0000);
+
+    write_rf64(5'd1, 64'h0000_0000_7fff_ffff);
+    run_instr(enc_i(12'h001, 5'd1, 3'b000, 5'd3, 7'b0011011), cycles);
+    check_reg("ADDIW", 5'd3, 64'hffff_ffff_8000_0000);
+    write_rf64(5'd1, 64'h0000_0000_ffff_ffff);
+    write_rf64(5'd2, 64'h1);
+    run_instr(enc_r(7'b0000000, 5'd2, 5'd1, 3'b000, 5'd3, 7'b0111011), cycles);
+    check_reg("ADDW", 5'd3, 64'h0);
+    run_instr(enc_i({7'b0100000, 5'd1}, 5'd1, 3'b101, 5'd3, 7'b0011011), cycles);
+    check_reg("SRAIW", 5'd3, 64'hffff_ffff_ffff_ffff);
+
+    run_instr(enc_u(20'h80000, 5'd3, 7'b0110111), cycles);
+    check_reg("LUI64", 5'd3, 64'hffff_ffff_8000_0000);
+    set_pc64(64'h0000_0001_0000_1000);
+    run_instr(enc_u(20'h00001, 5'd3, 7'b0010111), cycles);
+    check_reg("AUIPC64", 5'd3, 64'h0000_0001_0000_2000);
+
+    data_mem[0] = 32'h0000_0080;
+    write_rf64(5'd1, 64'h0);
+    run_instr(enc_i(12'h000, 5'd1, 3'b000, 5'd3, 7'b0000011), cycles);
+    check_reg("LB64", 5'd3, 64'hffff_ffff_ffff_ff80);
+    run_instr(enc_i(12'h000, 5'd1, 3'b100, 5'd3, 7'b0000011), cycles);
+    check_reg("LBU64", 5'd3, 64'h0000_0000_0000_0080);
+
+    data_mem[0] = 32'h8000_0000;
+    run_instr(enc_i(12'h000, 5'd1, 3'b010, 5'd3, 7'b0000011), cycles);
+    check_reg("LW64", 5'd3, 64'hffff_ffff_8000_0000);
+    run_instr(enc_i(12'h000, 5'd1, 3'b110, 5'd3, 7'b0000011), cycles);
+    check_reg("LWU64", 5'd3, 64'h0000_0000_8000_0000);
+
+    data_mem[0] = 32'h89ab_cdef;
+    data_mem[1] = 32'h0123_4567;
+    run_instr(enc_i(12'h000, 5'd1, 3'b011, 5'd3, 7'b0000011), cycles);
+    check_reg("LD64", 5'd3, 64'h0123_4567_89ab_cdef);
+
+    write_rf64(5'd2, 64'h1122_3344_5566_7788);
+    run_instr(enc_s(12'h000, 5'd2, 5'd1, 3'b011), cycles);
+    check_mem("SD_LOWER", 0, 32'h5566_7788);
+    check_mem("SD_UPPER", 1, 32'h1122_3344);
+
+    write_rf64(5'd1, 64'hffff_ffff_ffff_ffff);
+    write_rf64(5'd2, 64'hffff_ffff_ffff_ffff);
+    set_pc64(64'h0000_0000_0000_2000);
+    run_instr(enc_b(13'd8, 5'd2, 5'd1, 3'b000), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_2008) begin
+      $display("ERROR BEQ64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BEQ64: target = %h", last_pc_target);
+    end
+
+    if (errors == 0) begin
+      $display("ALL NATIVE RV64 TESTS PASSED");
+    end else begin
+      $display("NATIVE RV64 TESTS FAILED: %0d error(s)", errors);
+    end
+    $finish;
   end
 
 endmodule

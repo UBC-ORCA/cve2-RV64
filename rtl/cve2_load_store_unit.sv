@@ -36,10 +36,10 @@ module cve2_load_store_unit
   // signals to/from ID/EX stage
   input  logic         lsu_we_i,             // write enable                     -> from ID/EX
   input  logic [1:0]   lsu_type_i,           // data type: word, half word, byte -> from ID/EX
-  input  logic [31:0]  lsu_wdata_i,          // data to write to memory          -> from ID/EX
+  input  logic [63:0]  lsu_wdata_i,          // data to write to memory          -> from ID/EX
   input  logic         lsu_sign_ext_i,       // sign extension                   -> from ID/EX
 
-  output logic [31:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
+  output logic [63:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
   output logic         lsu_rdata_upper_o,
   output logic         lsu_rdata_valid_o,
   input  logic         lsu_req_i,            // data request                     -> from ID/EX
@@ -81,8 +81,11 @@ module cve2_load_store_unit
 
   logic [3:0]   data_be;
   logic [31:0]  data_wdata;
+  logic [31:0]  store_wdata_word;
 
   logic [31:0]  data_rdata_ext;
+  logic [63:0]  data_rdata_full;
+  logic [31:0]  dword_lower_q;
 
   logic [31:0]  rdata_w_ext; // word realignment for misaligned loads
   logic [31:0]  rdata_h_ext; // sign extension for half words
@@ -93,9 +96,6 @@ module cve2_load_store_unit
   logic         dword_misaligned;
   logic         dword_lower_rvalid;
   logic         subword_lower_rvalid;
-  logic         subword_upper_pending_q, subword_upper_pending_d;
-  logic [31:0]  subword_upper_data_q, subword_upper_data_d;
-  logic [31:0]  subword_upper_fill;
   logic         handle_misaligned_q, handle_misaligned_d; // high after receiving grant for first
                                                           // part of a misaligned access
   logic         pmp_err_q, pmp_err_d;
@@ -175,15 +175,18 @@ module cve2_load_store_unit
   // WData alignment //
   /////////////////////
 
+  assign store_wdata_word = (lsu_type_i == 2'b11 && handle_misaligned_q) ?
+                            lsu_wdata_i[63:32] : lsu_wdata_i[31:0];
+
   // prepare data to be written to the memory
   // we handle misaligned accesses, half word and byte accesses here
   always_comb begin
     unique case (data_offset)
-      2'b00:   data_wdata =  lsu_wdata_i[31:0];
-      2'b01:   data_wdata = {lsu_wdata_i[23:0], lsu_wdata_i[31:24]};
-      2'b10:   data_wdata = {lsu_wdata_i[15:0], lsu_wdata_i[31:16]};
-      2'b11:   data_wdata = {lsu_wdata_i[ 7:0], lsu_wdata_i[31: 8]};
-      default: data_wdata =  lsu_wdata_i[31:0];
+      2'b00:   data_wdata =  store_wdata_word;
+      2'b01:   data_wdata = {store_wdata_word[23:0], store_wdata_word[31:24]};
+      2'b10:   data_wdata = {store_wdata_word[15:0], store_wdata_word[31:16]};
+      2'b11:   data_wdata = {store_wdata_word[ 7:0], store_wdata_word[31: 8]};
+      default: data_wdata =  store_wdata_word;
     endcase // case (data_offset)
   end
 
@@ -215,30 +218,11 @@ module cve2_load_store_unit
     end
   end
 
-  assign subword_upper_fill = (data_sign_ext_q && data_rdata_ext[31]) ?
-                              32'hffff_ffff : 32'h0000_0000;
-
-  always_comb begin
-    subword_upper_pending_d = subword_upper_pending_q;
-    subword_upper_data_d    = subword_upper_data_q;
-
-    if (subword_upper_pending_q) begin
-      subword_upper_pending_d = 1'b0;
-    end
-
-    if (subword_lower_rvalid) begin
-      subword_upper_pending_d = 1'b1;
-      subword_upper_data_d    = subword_upper_fill;
-    end
-  end
-
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      subword_upper_pending_q <= 1'b0;
-      subword_upper_data_q    <= 32'h0000_0000;
-    end else begin
-      subword_upper_pending_q <= subword_upper_pending_d;
-      subword_upper_data_q    <= subword_upper_data_d;
+      dword_lower_q <= 32'h0000_0000;
+    end else if (dword_lower_rvalid) begin
+      dword_lower_q <= data_rdata_ext;
     end
   end
 
@@ -358,6 +342,16 @@ module cve2_load_store_unit
       2'b11:       data_rdata_ext = rdata_w_ext;
       default:     data_rdata_ext = rdata_w_ext;
     endcase // case (data_type_q)
+  end
+
+  always_comb begin
+    if (data_type_q == 2'b11) begin
+      data_rdata_full = {data_rdata_i, dword_lower_q};
+    end else if (data_sign_ext_q) begin
+      data_rdata_full = {{32{data_rdata_ext[31]}}, data_rdata_ext};
+    end else begin
+      data_rdata_full = {32'h0000_0000, data_rdata_ext};
+    end
   end
 
   /////////////
@@ -532,26 +526,18 @@ module cve2_load_store_unit
                                (ls_fsm_cs == WAIT_RVALID_MIS_GNTS_DONE)) &
                               data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
 
-  assign subword_lower_rvalid = (data_type_q != 2'b11) &
-                                (ls_fsm_cs == IDLE) &
-                                data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
+  assign subword_lower_rvalid = 1'b0;
 
-  assign lsu_resp_valid_o = subword_upper_pending_q |
-                            (((data_rvalid_i | pmp_err_q | misaligned_err_q) &
-                              (ls_fsm_cs == IDLE)) & ~subword_lower_rvalid);
+  assign lsu_resp_valid_o = ((data_rvalid_i | pmp_err_q | misaligned_err_q) &
+                             (ls_fsm_cs == IDLE));
 
-  assign lsu_rdata_valid_o = subword_upper_pending_q |
-                             ((((ls_fsm_cs == IDLE) & data_rvalid_i) |
-                               dword_lower_rvalid) &
+  assign lsu_rdata_valid_o = ((ls_fsm_cs == IDLE) & data_rvalid_i &
                               ~data_or_pmp_err & ~data_we_q);
 
-  assign lsu_rdata_upper_o  = subword_upper_pending_q |
-                              ((data_type_q == 2'b11) &
-                              (ls_fsm_cs == IDLE) &
-                              data_rvalid_i & ~data_or_pmp_err & ~data_we_q);
+  assign lsu_rdata_upper_o = 1'b0;
 
   // output to register file
-  assign lsu_rdata_o = subword_upper_pending_q ? subword_upper_data_q : data_rdata_ext;
+  assign lsu_rdata_o = data_rdata_full;
 
   // output data address must be word aligned
   assign data_addr_w_aligned = {data_addr[63:2], 2'b00};
@@ -569,7 +555,7 @@ module cve2_load_store_unit
   assign load_err_o    = data_or_pmp_err & ~data_we_q & lsu_resp_valid_o;
   assign store_err_o   = data_or_pmp_err &  data_we_q & lsu_resp_valid_o;
 
-  assign busy_o = (ls_fsm_cs != IDLE) | subword_upper_pending_q;
+  assign busy_o = (ls_fsm_cs != IDLE);
 
   //////////
   // FCOV //
