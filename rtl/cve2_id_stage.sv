@@ -22,7 +22,8 @@ module cve2_id_stage #(
   parameter bit               RV32E           = 0,
   parameter cve2_pkg::rv32m_e RV32M           = cve2_pkg::RV32MFast,
   parameter cve2_pkg::rv32b_e RV32B           = cve2_pkg::RV32BNone,
-  parameter bit               XInterface      = 1'b0
+  parameter bit               XInterface      = 1'b0,
+  parameter bit               EnableCSRs      = 1'b0
 ) (
   input  logic                      clk_i,
   input  logic                      rst_ni,
@@ -494,7 +495,8 @@ module cve2_id_stage #(
     .RV32E          (RV32E),
     .RV32M          (RV32M),
     .RV32B          (RV32B),
-    .XInterface     (XInterface)
+    .XInterface     (XInterface),
+    .EnableCSRs     (EnableCSRs)
   ) decoder_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
@@ -701,7 +703,7 @@ module cve2_id_stage #(
   // csv_access_o is set when CSR access instruction is present and is used to compute whether a CSR
   // access is illegal. A combinational loop would be created if csr_op_en_o was used along (as
   // asserting it for an illegal csr access would result in a flush that would need to deassert it).
-  assign csr_op_en_o             = csr_access_o & instr_executing & instr_id_done_o;
+  assign csr_op_en_o             = EnableCSRs & csr_access_o & instr_executing & instr_id_done_o;
 
   assign alu_operator_ex_o           = alu_operator;
   assign alu_operand_a_ex_o          = alu_operand_a;
