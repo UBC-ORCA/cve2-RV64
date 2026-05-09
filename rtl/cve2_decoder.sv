@@ -18,7 +18,8 @@ module cve2_decoder #(
   parameter bit RV32E               = 0,
   parameter cve2_pkg::rv32m_e RV32M = cve2_pkg::RV32MFast,
   parameter cve2_pkg::rv32b_e RV32B = cve2_pkg::RV32BNone,
-  parameter bit               XInterface    = 1'b0
+  parameter bit               XInterface    = 1'b0,
+  parameter bit               EnableCSRs    = 1'b0
 ) (
   input  logic                 clk_i,
   input  logic                 rst_ni,
@@ -624,7 +625,9 @@ module cve2_decoder #(
       end
 
       OPCODE_SYSTEM: begin
-        if (instr[14:12] == 3'b000) begin
+        if (!EnableCSRs) begin
+          illegal_insn = 1'b1;
+        end else if (instr[14:12] == 3'b000) begin
           // non CSR related SYSTEM instructions
           unique case (instr[31:20])
             12'h000:  // ECALL

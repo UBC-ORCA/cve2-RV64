@@ -22,7 +22,8 @@ module cve2_id_stage #(
   parameter bit               RV32E           = 0,
   parameter cve2_pkg::rv32m_e RV32M           = cve2_pkg::RV32MFast,
   parameter cve2_pkg::rv32b_e RV32B           = cve2_pkg::RV32BNone,
-  parameter bit               XInterface      = 1'b0
+  parameter bit               XInterface      = 1'b0,
+  parameter bit               EnableCSRs      = 1'b0
 ) (
   input  logic                      clk_i,
   input  logic                      rst_ni,
@@ -642,7 +643,8 @@ module cve2_id_stage #(
     .RV32E          (RV32E),
     .RV32M          (RV32M),
     .RV32B          (RV32B),
-    .XInterface     (XInterface)
+    .XInterface     (XInterface),
+    .EnableCSRs     (EnableCSRs)
   ) decoder_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
@@ -1215,16 +1217,19 @@ module cve2_id_stage #(
   assign csr_is_imm_op        = (alu_op_a_mux_sel == OP_A_IMM);
   assign csr_src_lower_now    = csr_is_imm_op ? imm_a : rf_rdata_a_i;
   assign csr_src_tag_now      = csr_is_imm_op ? 2'b10 : r_a_tag_i;
-  assign csr_src_needs_upper  = csr_access_o &&
+  assign csr_src_needs_upper  = EnableCSRs &&
+                                csr_access_o &&
                                 (csr_op_o != CSR_OP_READ) &&
                                 !csr_is_imm_op &&
                                 (r_a_tag_i == 2'b01);
 
-  assign csr_read_needs_upper = csr_access_o &&
+  assign csr_read_needs_upper = EnableCSRs &&
+                                csr_access_o &&
                                 rf_we_dec &&
                                 (rf_waddr_id_o != 5'd0) &&
                                 (csr_rdata_tag_i == 2'b01);
   assign csr_need_upper_cycle = (id_fsm_q == FIRST_CYCLE) &&
+                                EnableCSRs &&
                                 csr_access_o &&
                                 (csr_src_needs_upper || csr_read_needs_upper);
 
@@ -1234,17 +1239,19 @@ module cve2_id_stage #(
   assign lsu_sign_ext_o          = lsu_sign_ext;
   assign lsu_store_upper_half    = lsu_addr_incr_req_i & lsu_we & (lsu_type == 2'b11);
   assign lsu_wdata_o             = lsu_store_upper_half ? lsu_wdata_upper : rf_rdata_b_i;
-  assign csr_op_en_o             = csr_access_o & instr_executing & instr_id_done_o;
+  assign csr_op_en_o             = EnableCSRs & csr_access_o & instr_executing & instr_id_done_o;
   assign csr_wdata_o             = (csr_upper_cycle && csr_src_needs_upper_q) ?
                                     rf_rdata_a_i :
                                     (csr_upper_cycle ? csr_src_lower_q : csr_src_lower_now);
   assign csr_wdata_tag_o         = csr_upper_cycle ? csr_src_tag_q : csr_src_tag_now;
-  assign csr_wdata_upper_o       = csr_upper_cycle && csr_src_needs_upper_q;
-  assign csr_wdata_capture_o     = instr_executing_spec &&
+  assign csr_wdata_upper_o       = EnableCSRs && csr_upper_cycle && csr_src_needs_upper_q;
+  assign csr_wdata_capture_o     = EnableCSRs &&
+                                    instr_executing_spec &&
                                     csr_need_upper_cycle &&
                                     csr_src_needs_upper;
-  assign csr_rdata_upper_o       = csr_upper_cycle && csr_read_needs_upper_q;
-  assign csr_rdata_capture_o     = instr_executing_spec &&
+  assign csr_rdata_upper_o       = EnableCSRs && csr_upper_cycle && csr_read_needs_upper_q;
+  assign csr_rdata_capture_o     = EnableCSRs &&
+                                    instr_executing_spec &&
                                     csr_need_upper_cycle &&
                                     csr_read_needs_upper;
 

@@ -4,6 +4,8 @@ module testbench;
 
   import cve2_pkg::*;
 
+  localparam bit EnableCSRs = 1'b0;
+
   // --------------------
   // clk / reset
   // --------------------
@@ -76,6 +78,7 @@ module testbench;
   pc_sel_e           pc_mux_o;
   exc_pc_sel_e       exc_pc_mux_o;
   exc_cause_e        exc_cause_o;
+  logic              illegal_insn_o;
 
   // --------------------
   // Error/illegal inputs
@@ -378,14 +381,15 @@ module testbench;
     .RV32E      (1'b0),
     .RV32M      (RV32MFast),
     .RV32B      (RV32BNone),
-    .XInterface (1'b0)
+    .XInterface (1'b0),
+    .EnableCSRs (EnableCSRs)
   ) dut_id (
     .clk_i,
     .rst_ni,
 
     .fetch_enable_i,
     .ctrl_busy_o(),
-    .illegal_insn_o(),
+    .illegal_insn_o,
 
     .instr_valid_i,
     .instr_rdata_i,
@@ -929,6 +933,7 @@ module testbench;
   localparam logic [31:0] CSRRS_X3_MEPC_X0 = 32'h341021f3; // CSRRS x3, mepc, x0
   localparam logic [31:0] CSRRW_X3_MEPC_X1 = 32'h341091f3; // CSRRW x3, mepc, x1
   localparam logic [31:0] CSRRWI_X3_MEPC_5 = 32'h3412d1f3; // CSRRWI x3, mepc, 5
+  localparam logic [31:0] MRET_INSN        = 32'h30200073;
 
   task automatic inject_instr(input  logic [31:0]  encoding,
                             output int unsigned  cycles_taken);
@@ -947,6 +952,35 @@ module testbench;
       cycles_taken++;
       @(posedge clk_i);
       #1;
+    end
+
+    instr_valid_i     = 1'b0;
+    instr_rdata_i     = 32'h0000_0013;
+    instr_rdata_alu_i = 32'h0000_0013;
+
+    repeat (3) @(posedge clk_i);
+  endtask
+
+  task automatic inject_illegal_instr_check(input string test_name,
+                                            input logic [31:0] encoding);
+    @(posedge clk_i);
+    #1;
+    instr_valid_i     = 1'b1;
+    instr_rdata_i     = encoding;
+    instr_rdata_alu_i = encoding;
+    #1;
+
+    if (!illegal_insn_o) begin
+      $error("%s FAIL: instruction %08h was not flagged illegal", test_name, encoding);
+    end else begin
+      $display("%s PASS: instruction %08h flagged illegal", test_name, encoding);
+    end
+
+    if (csr_access_o || csr_op_en_o || rf_we_id_o) begin
+      $error("%s FAIL: csr_access=%0b csr_op_en=%0b rf_we=%0b",
+             test_name, csr_access_o, csr_op_en_o, rf_we_id_o);
+    end else begin
+      $display("%s PASS: CSR/RF side effects suppressed", test_name);
     end
 
     instr_valid_i     = 1'b0;
@@ -2512,55 +2546,66 @@ module testbench;
     $display("==============================");
 
     // ==========================================================
-    // CSR width tests
+    // CSR / no-CSR tests
     // ==========================================================
-    $display("\n========== CSR width tests ==========");
+    if (EnableCSRs) begin
+      $display("\n========== CSR width tests ==========");
 
-    $display("\n---- CSRFILE-1: MISA reports RV64 MXL ----");
-    csr64_read_check("CSRFILE01 MISA", CSR_MISA, 64'h8000_0000_0010_1104);
+      $display("\n---- CSRFILE-1: MISA reports RV64 MXL ----");
+      csr64_read_check("CSRFILE01 MISA", CSR_MISA, 64'h8000_0000_0010_1104);
 
-    $display("\n---- CSRFILE-2: MSCRATCH stores full 64-bit value ----");
-    csr64_write(CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
-    csr64_read_check("CSRFILE02 MSCRATCH", CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
+      $display("\n---- CSRFILE-2: MSCRATCH stores full 64-bit value ----");
+      csr64_write(CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
+      csr64_read_check("CSRFILE02 MSCRATCH", CSR_MSCRATCH, 64'h1234_5678_9abc_def0);
 
-    $display("\n---- CSRFILE-3: MEPC write stores full 64-bit aligned value ----");
-    csr64_write(CSR_MEPC, 64'h0fed_cba9_8765_4321);
-    csr64_read_check("CSRFILE03 MEPC", CSR_MEPC, 64'h0fed_cba9_8765_4320);
-    check_value64("CSRFILE03 MEPC output", csr64_mepc_o, 64'h0fed_cba9_8765_4320);
+      $display("\n---- CSRFILE-3: MEPC write stores full 64-bit aligned value ----");
+      csr64_write(CSR_MEPC, 64'h0fed_cba9_8765_4321);
+      csr64_read_check("CSRFILE03 MEPC", CSR_MEPC, 64'h0fed_cba9_8765_4320);
+      check_value64("CSRFILE03 MEPC output", csr64_mepc_o, 64'h0fed_cba9_8765_4320);
 
-    $display("\n---- CSRFILE-4: exception save captures 64-bit PC and mtval ----");
-    csr64_save_id_exception(64'hfeed_cafe_0000_0042, 64'hdead_beef_1234_5678);
-    check_value64("CSRFILE04 MEPC output", csr64_mepc_o, 64'hfeed_cafe_0000_0042);
-    csr64_read_check("CSRFILE04 MTVAL", CSR_MTVAL, 64'hdead_beef_1234_5678);
+      $display("\n---- CSRFILE-4: exception save captures 64-bit PC and mtval ----");
+      csr64_save_id_exception(64'hfeed_cafe_0000_0042, 64'hdead_beef_1234_5678);
+      check_value64("CSRFILE04 MEPC output", csr64_mepc_o, 64'hfeed_cafe_0000_0042);
+      csr64_read_check("CSRFILE04 MTVAL", CSR_MTVAL, 64'hdead_beef_1234_5678);
 
-    $display("\n---- CSR-1: CSR read with zero upper tags 10 ----");
-    inject_csr(CSRRS_X3_MEPC_X0, 64'h0000_0000_1122_3344, cycles);
-    check_result("CSR01", 5'd3, 32'h1122_3344, 2'b10, 1, cycles, 32'h0, 1'b0);
+      $display("\n---- CSR-1: CSR read with zero upper tags 10 ----");
+      inject_csr(CSRRS_X3_MEPC_X0, 64'h0000_0000_1122_3344, cycles);
+      check_result("CSR01", 5'd3, 32'h1122_3344, 2'b10, 1, cycles, 32'h0, 1'b0);
 
-    $display("\n---- CSR-2: CSR read with ones upper tags 11 ----");
-    inject_csr(CSRRS_X3_MEPC_X0, 64'hffff_ffff_89ab_cdef, cycles);
-    check_result("CSR02", 5'd3, 32'h89ab_cdef, 2'b11, 1, cycles, 32'h0, 1'b0);
+      $display("\n---- CSR-2: CSR read with ones upper tags 11 ----");
+      inject_csr(CSRRS_X3_MEPC_X0, 64'hffff_ffff_89ab_cdef, cycles);
+      check_result("CSR02", 5'd3, 32'h89ab_cdef, 2'b11, 1, cycles, 32'h0, 1'b0);
 
-    $display("\n---- CSR-3: CSR read with explicit upper takes upper cycle ----");
-    inject_csr(CSRRS_X3_MISA_X0, 64'h8000_0000_0010_1104, cycles);
-    check_result("CSR03", 5'd3, 32'h0010_1104, 2'b01, 2, cycles, 32'h8000_0000, 1'b1);
+      $display("\n---- CSR-3: CSR read with explicit upper takes upper cycle ----");
+      inject_csr(CSRRS_X3_MISA_X0, 64'h8000_0000_0010_1104, cycles);
+      check_result("CSR03", 5'd3, 32'h0010_1104, 2'b01, 2, cycles, 32'h8000_0000, 1'b1);
 
-    $display("\n---- CSR-4: CSRRW uses explicit 64-bit source operand ----");
-    write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
-    inject_csr_capture_wdata(CSRRW_X3_MEPC_X1, 64'h0000_0000_5566_7788,
-                             cycles, captured_csr_wdata);
-    check_value64("CSR04 wdata", captured_csr_wdata, 64'h1234_5678_9abc_def0);
-    check_result("CSR04", 5'd3, 32'h5566_7788, 2'b10, 2, cycles, 32'h0, 1'b0);
+      $display("\n---- CSR-4: CSRRW uses explicit 64-bit source operand ----");
+      write_rf_64(5'd1, 32'h1234_5678, 32'h9abc_def0, 2'b01);
+      inject_csr_capture_wdata(CSRRW_X3_MEPC_X1, 64'h0000_0000_5566_7788,
+                               cycles, captured_csr_wdata);
+      check_value64("CSR04 wdata", captured_csr_wdata, 64'h1234_5678_9abc_def0);
+      check_result("CSR04", 5'd3, 32'h5566_7788, 2'b10, 2, cycles, 32'h0, 1'b0);
 
-    $display("\n---- CSR-5: CSRRWI zero-extends immediate to 64-bit write data ----");
-    inject_csr_capture_wdata(CSRRWI_X3_MEPC_5, 64'h0000_0000_aabb_ccdd,
-                             cycles, captured_csr_wdata);
-    check_value64("CSR05 wdata", captured_csr_wdata, 64'h0000_0000_0000_0005);
-    check_result("CSR05", 5'd3, 32'haabb_ccdd, 2'b10, 1, cycles, 32'h0, 1'b0);
+      $display("\n---- CSR-5: CSRRWI zero-extends immediate to 64-bit write data ----");
+      inject_csr_capture_wdata(CSRRWI_X3_MEPC_5, 64'h0000_0000_aabb_ccdd,
+                               cycles, captured_csr_wdata);
+      check_value64("CSR05 wdata", captured_csr_wdata, 64'h0000_0000_0000_0005);
+      check_result("CSR05", 5'd3, 32'haabb_ccdd, 2'b10, 1, cycles, 32'h0, 1'b0);
 
-    $display("\n==============================");
-    $display("All %0d CSR width tests complete", 9);
-    $display("==============================");
+      $display("\n==============================");
+      $display("All %0d CSR width tests complete", 9);
+      $display("==============================");
+    end else begin
+      $display("\n========== No-CSR decode tests ==========");
+
+      inject_illegal_instr_check("NOCSR01 CSRRS", CSRRS_X3_MEPC_X0);
+      inject_illegal_instr_check("NOCSR02 MRET", MRET_INSN);
+
+      $display("\n==============================");
+      $display("No-CSR decode tests complete");
+      $display("==============================");
+    end
 
 
     // ==========================================================
