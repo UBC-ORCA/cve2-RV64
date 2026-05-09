@@ -19,7 +19,8 @@ module cve2_top import cve2_pkg::*; #(
   parameter int unsigned MHPMCounterWidth = 40,
   parameter bit          RV32E            = 1'b0,
   parameter rv32m_e      RV32M            = RV32MNone,
-  parameter bit          XInterface       = 1'b0
+  parameter bit          XInterface       = 1'b0,
+  parameter bit          EnableCSRs       = 1'b0
 ) (
   // Clock and Reset
   input  logic                         clk_i,
@@ -183,7 +184,8 @@ module cve2_top import cve2_pkg::*; #(
     .RV32B            (RV32B),
     .DbgTriggerEn     (DbgTriggerEn),
     .DbgHwBreakNum    (DbgHwBreakNum),
-    .XInterface       (XInterface)
+    .XInterface       (XInterface),
+    .EnableCSRs       (EnableCSRs)
   ) u_cve2_core (
     .clk_i(clk),
     .rst_ni,

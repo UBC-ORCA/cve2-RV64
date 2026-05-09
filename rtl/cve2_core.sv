@@ -24,7 +24,8 @@ module cve2_core import cve2_pkg::*; #(
   parameter rv32b_e      RV32B             = RV32BNone,
   parameter bit          DbgTriggerEn      = 1'b0,
   parameter int unsigned DbgHwBreakNum     = 1,
-  parameter bit          XInterface        = 1'b0
+  parameter bit          XInterface        = 1'b0,
+  parameter bit          EnableCSRs        = 1'b0
 ) (
   // Clock and Reset
   input  logic                         clk_i,
@@ -290,6 +291,12 @@ module cve2_core import cve2_pkg::*; #(
   logic        debug_ebreaku;
   logic        trigger_match;
 
+`ifdef RVFI
+  irqs_t       rvfi_csr_mip;
+  logic [5:0]  rvfi_csr_mcause;
+  logic [63:0] rvfi_csr_mcycle;
+`endif
+
   // signals relating to instruction movements between pipeline stages
   // used by performance counters and RVFI
   logic        instr_id_done;
@@ -392,7 +399,8 @@ module cve2_core import cve2_pkg::*; #(
     .RV32E          (RV32E),
     .RV32M          (RV32M),
     .RV32B          (RV32B),
-    .XInterface     (XInterface)
+    .XInterface     (XInterface),
+    .EnableCSRs     (EnableCSRs)
   ) id_stage_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
@@ -755,104 +763,139 @@ module cve2_core import cve2_pkg::*; #(
 
   assign csr_addr   = csr_num_e'(csr_access ? alu_operand_b_ex[11:0] : 12'b0);
 
-  cve2_cs_registers #(
-    .DbgTriggerEn     (DbgTriggerEn),
-    .DbgHwBreakNum    (DbgHwBreakNum),
-    .MHPMCounterNum   (MHPMCounterNum),
-    .MHPMCounterWidth (MHPMCounterWidth),
-    .PMPEnable        (PMPEnable),
-    .PMPGranularity   (PMPGranularity),
-    .PMPNumRegions    (PMPNumRegions),
-    .RV32E            (RV32E),
-    .RV32M            (RV32M),
-    .RV32B            (RV32B)
-  ) cs_registers_i (
-    .clk_i (clk_i),
-    .rst_ni(rst_ni),
+  if (EnableCSRs) begin : g_csrs
+    cve2_cs_registers #(
+      .DbgTriggerEn     (DbgTriggerEn),
+      .DbgHwBreakNum    (DbgHwBreakNum),
+      .MHPMCounterNum   (MHPMCounterNum),
+      .MHPMCounterWidth (MHPMCounterWidth),
+      .PMPEnable        (PMPEnable),
+      .PMPGranularity   (PMPGranularity),
+      .PMPNumRegions    (PMPNumRegions),
+      .RV32E            (RV32E),
+      .RV32M            (RV32M),
+      .RV32B            (RV32B)
+    ) cs_registers_i (
+      .clk_i (clk_i),
+      .rst_ni(rst_ni),
 
-    // Hart ID from outside
-    .hart_id_i      (hart_id_i),
-    .priv_mode_id_o (priv_mode_id),
-    .priv_mode_lsu_o(priv_mode_lsu),
+      // Hart ID from outside
+      .hart_id_i      (hart_id_i),
+      .priv_mode_id_o (priv_mode_id),
+      .priv_mode_lsu_o(priv_mode_lsu),
 
-    // mtvec
-    .csr_mtvec_o     (csr_mtvec),
-    .csr_mtvec_init_i(csr_mtvec_init),
-    .boot_addr_i     (boot_addr_i),
+      // mtvec
+      .csr_mtvec_o     (csr_mtvec),
+      .csr_mtvec_init_i(csr_mtvec_init),
+      .boot_addr_i     (boot_addr_i),
 
-    // Interface to CSRs     ( SRAM like                    )
-    .csr_access_i(csr_access),
-    .csr_addr_i  (csr_addr),
-    .csr_wdata_i        (csr_wdata),
-    .csr_wdata_upper_i  (csr_wdata_upper),
-    .csr_wdata_capture_i(csr_wdata_capture),
-    .csr_op_i    (csr_op),
-    .csr_op_en_i (csr_op_en),
-    .csr_rdata_o        (csr_rdata),
-    .csr_rdata_upper_i  (csr_rdata_upper),
-    .csr_rdata_capture_i(csr_rdata_capture),
+      // Interface to CSRs     ( SRAM like                    )
+      .csr_access_i(csr_access),
+      .csr_addr_i  (csr_addr),
+      .csr_wdata_i        (csr_wdata),
+      .csr_wdata_upper_i  (csr_wdata_upper),
+      .csr_wdata_capture_i(csr_wdata_capture),
+      .csr_op_i    (csr_op),
+      .csr_op_en_i (csr_op_en),
+      .csr_rdata_o        (csr_rdata),
+      .csr_rdata_upper_i  (csr_rdata_upper),
+      .csr_rdata_capture_i(csr_rdata_capture),
 
-    // Interrupt related control signals
-    .irq_software_i   (irq_software_i),
-    .irq_timer_i      (irq_timer_i),
-    .irq_external_i   (irq_external_i),
-    .irq_fast_i       (irq_fast_i),
-    .nmi_mode_i       (nmi_mode),
-    .irq_pending_o    (irq_pending_o),
-    .irqs_o           (irqs),
-    .csr_mstatus_mie_o(csr_mstatus_mie),
-    .csr_mstatus_tw_o (csr_mstatus_tw),
-    .csr_mepc_o       (csr_mepc),
+      // Interrupt related control signals
+      .irq_software_i   (irq_software_i),
+      .irq_timer_i      (irq_timer_i),
+      .irq_external_i   (irq_external_i),
+      .irq_fast_i       (irq_fast_i),
+      .nmi_mode_i       (nmi_mode),
+      .irq_pending_o    (irq_pending_o),
+      .irqs_o           (irqs),
+      .csr_mstatus_mie_o(csr_mstatus_mie),
+      .csr_mstatus_tw_o (csr_mstatus_tw),
+      .csr_mepc_o       (csr_mepc),
 
-    // PMP
-    .csr_pmp_cfg_o    (csr_pmp_cfg),
-    .csr_pmp_addr_o   (csr_pmp_addr),
-    .csr_pmp_mseccfg_o(csr_pmp_mseccfg),
+      // PMP
+      .csr_pmp_cfg_o    (csr_pmp_cfg),
+      .csr_pmp_addr_o   (csr_pmp_addr),
+      .csr_pmp_mseccfg_o(csr_pmp_mseccfg),
 
-    // debug
-    .csr_depc_o         (csr_depc),
-    .debug_mode_i       (debug_mode),
-    .debug_cause_i      (debug_cause),
-    .debug_csr_save_i   (debug_csr_save),
-    .debug_single_step_o(debug_single_step),
-    .debug_ebreakm_o    (debug_ebreakm),
-    .debug_ebreaku_o    (debug_ebreaku),
-    .trigger_match_o    (trigger_match),
+      // debug
+      .csr_depc_o         (csr_depc),
+      .debug_mode_i       (debug_mode),
+      .debug_cause_i      (debug_cause),
+      .debug_csr_save_i   (debug_csr_save),
+      .debug_single_step_o(debug_single_step),
+      .debug_ebreakm_o    (debug_ebreakm),
+      .debug_ebreaku_o    (debug_ebreaku),
+      .trigger_match_o    (trigger_match),
 
-    .pc_if_i(pc_if),
-    .pc_id_i(pc_id),
+      .pc_if_i(pc_if),
+      .pc_id_i(pc_id),
 
-    .csr_save_if_i     (csr_save_if),
-    .csr_save_id_i     (csr_save_id),
-    .csr_restore_mret_i(csr_restore_mret_id),
-    .csr_restore_dret_i(csr_restore_dret_id),
-    .csr_save_cause_i  (csr_save_cause),
-    .csr_mcause_i      (exc_cause),
-    .csr_mtval_i       (csr_mtval),
-    .illegal_csr_insn_o(illegal_csr_insn_id),
+      .csr_save_if_i     (csr_save_if),
+      .csr_save_id_i     (csr_save_id),
+      .csr_restore_mret_i(csr_restore_mret_id),
+      .csr_restore_dret_i(csr_restore_dret_id),
+      .csr_save_cause_i  (csr_save_cause),
+      .csr_mcause_i      (exc_cause),
+      .csr_mtval_i       (csr_mtval),
+      .illegal_csr_insn_o(illegal_csr_insn_id),
 
-    // performance counter related signals
-    .instr_ret_i                (perf_instr_ret_wb),
-    .instr_ret_compressed_i     (perf_instr_ret_compressed_wb),
-    .iside_wait_i               (perf_iside_wait),
-    .jump_i                     (perf_jump),
-    .branch_i                   (perf_branch),
-    .branch_taken_i             (perf_tbranch),
-    .mem_load_i                 (perf_load),
-    .mem_store_i                (perf_store),
-    .dside_wait_i               (perf_dside_wait),
-    .wfi_wait_i                 (perf_wfi_wait),
-    .div_wait_i                 (perf_div_wait)
-  );
+      // performance counter related signals
+      .instr_ret_i                (perf_instr_ret_wb),
+      .instr_ret_compressed_i     (perf_instr_ret_compressed_wb),
+      .iside_wait_i               (perf_iside_wait),
+      .jump_i                     (perf_jump),
+      .branch_i                   (perf_branch),
+      .branch_taken_i             (perf_tbranch),
+      .mem_load_i                 (perf_load),
+      .mem_store_i                (perf_store),
+      .dside_wait_i               (perf_dside_wait),
+      .wfi_wait_i                 (perf_wfi_wait),
+      .div_wait_i                 (perf_div_wait)
+    );
+
+`ifdef RVFI
+    assign rvfi_csr_mip    = cs_registers_i.mip;
+    assign rvfi_csr_mcause = cs_registers_i.mcause_q[5:0];
+    assign rvfi_csr_mcycle = cs_registers_i.mcycle_counter_i.counter_val_o;
+`endif
+  end else begin : g_no_csrs
+    assign priv_mode_id       = PRIV_LVL_M;
+    assign priv_mode_lsu      = PRIV_LVL_M;
+    assign csr_mtvec          = 64'h0000_0000_0000_0000;
+    assign csr_rdata          = 32'h0000_0000;
+    assign irq_pending_o      = 1'b0;
+    assign irqs               = '0;
+    assign csr_mstatus_mie    = 1'b0;
+    assign csr_mstatus_tw     = 1'b0;
+    assign csr_mepc           = 64'h0000_0000_0000_0000;
+    assign csr_pmp_cfg        = '{default:'0};
+    assign csr_pmp_addr       = '{default:'0};
+    assign csr_pmp_mseccfg    = '0;
+    assign csr_depc           = 64'h0000_0000_0000_0000;
+    assign debug_single_step  = 1'b0;
+    assign debug_ebreakm      = 1'b0;
+    assign debug_ebreaku      = 1'b0;
+    assign trigger_match      = 1'b0;
+    assign illegal_csr_insn_id = 1'b0;
+
+`ifdef RVFI
+    assign rvfi_csr_mip    = '0;
+    assign rvfi_csr_mcause = '0;
+    assign rvfi_csr_mcycle = '0;
+`endif
+  end
 
   // These assertions are in top-level as instr_valid_id required as the enable term
-  `ASSERT(CVE2CsrOpValid, instr_valid_id |-> csr_op inside {
+  if (EnableCSRs) begin : g_csr_assertions
+    `ASSERT(CVE2CsrOpValid, instr_valid_id |-> csr_op inside {
       CSR_OP_READ,
       CSR_OP_WRITE,
       CSR_OP_SET,
       CSR_OP_CLEAR
       })
-  `ASSERT_KNOWN_IF(CVE2CsrWdataIntKnown, cs_registers_i.csr_wdata_int, csr_op_en)
+    `ASSERT_KNOWN_IF(CVE2CsrWdataIntKnown, g_csrs.cs_registers_i.csr_wdata_int, csr_op_en)
+  end
 
   if (PMPEnable) begin : g_pmp
     logic [33:0] pmp_req_addr [PMP_NUM_CHAN];
@@ -1155,7 +1198,7 @@ module cve2_core import cve2_pkg::*; #(
         captured_valid     <= 1'b1;
         captured_nmi       <= irq_nm_i;
         captured_irq       <= new_irq | new_nmi;
-        captured_mip       <= cs_registers_i.mip;
+        captured_mip       <= rvfi_csr_mip;
         captured_debug_req <= debug_req_i;
       end
 
@@ -1186,7 +1229,7 @@ module cve2_core import cve2_pkg::*; #(
     end else if (if_stage_i.instr_valid_id_d & if_stage_i.instr_new_id_d) begin
       automatic logic ext_debug_req = instr_valid_id | ~captured_valid ? debug_req_i : captured_debug_req;
 
-      rvfi_ext_stage_mip[0]       <= instr_valid_id | ~captured_valid ? cs_registers_i.mip :
+      rvfi_ext_stage_mip[0]       <= instr_valid_id | ~captured_valid ? rvfi_csr_mip :
                                                                         captured_mip;
       rvfi_ext_stage_nmi[0]       <= instr_valid_id | ~captured_valid ? irq_nm_i :
                                                                         captured_nmi;
@@ -1238,9 +1281,9 @@ module cve2_core import cve2_pkg::*; #(
             rvfi_stage_trap[i]            <= rvfi_trap_id;
             if (rvfi_intr_d) begin
                 if (captured_irq) begin
-                    rvfi_stage_intr[i] <= { cs_registers_i.mcause_q[5:0], 3'b101};
+                    rvfi_stage_intr[i] <= {rvfi_csr_mcause, 3'b101};
                 end else begin
-                    rvfi_stage_intr[i] <= { cs_registers_i.mcause_q[5:0], 3'b011};
+                    rvfi_stage_intr[i] <= {rvfi_csr_mcause, 3'b011};
                 end
             end
             else
@@ -1268,7 +1311,7 @@ module cve2_core import cve2_pkg::*; #(
             rvfi_ext_stage_mip[i+1]       <= rvfi_ext_stage_mip[i];
             rvfi_ext_stage_nmi[i+1]       <= rvfi_ext_stage_nmi[i];
             rvfi_ext_stage_debug_req[i+1] <= rvfi_ext_stage_debug_req[i];
-            rvfi_ext_stage_mcycle[i]      <= cs_registers_i.mcycle_counter_i.counter_val_o;
+            rvfi_ext_stage_mcycle[i]      <= rvfi_csr_mcycle;
             rvfi_stage_dbg[i]             <= rvfi_dbg;
             rvfi_stage_dbg_mode[i]        <= rvfi_dbg_mode;
           end
