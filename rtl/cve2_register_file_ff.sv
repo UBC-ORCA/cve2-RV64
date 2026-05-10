@@ -96,9 +96,7 @@ module cve2_register_file_ff #(
   assign rdata_b_o = (raddr_b_i == 5'd0) ? WordZeroVal : rf_mem_b[raddr_b];
 
   // Legacy ports not used by the native register file.
-  logic unused_test_en;
-  logic unused_upper_controls;
-  assign unused_test_en        = test_en_i;
-  assign unused_upper_controls = r_a_upper_i ^ r_b_upper_i ^ w_upper_i;
+  logic unused_signals;
+  assign unused_signals = test_en_i | r_a_upper_i | r_b_upper_i | w_upper_i;
 
 endmodule

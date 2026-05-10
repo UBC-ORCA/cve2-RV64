@@ -49,10 +49,10 @@ module cve2_core import cve2_pkg::*; #(
   input  logic                         data_gnt_i,
   input  logic                         data_rvalid_i,
   output logic                         data_we_o,
-  output logic [3:0]                   data_be_o,
+  output logic [7:0]                   data_be_o,
   output logic [63:0]                  data_addr_o,
-  output logic [31:0]                  data_wdata_o,
-  input  logic [31:0]                  data_rdata_i,
+  output logic [63:0]                  data_wdata_o,
+  input  logic [63:0]                  data_rdata_i,
   input  logic                         data_err_i,
 
   // Core-V Extension Interface (CV-X-IF)
@@ -227,12 +227,8 @@ module cve2_core import cve2_pkg::*; #(
   csr_op_e     csr_op;
   logic        csr_op_en;
   csr_num_e    csr_addr;
-  logic [31:0] csr_rdata;
-  logic        csr_rdata_upper;
-  logic        csr_rdata_capture;
-  logic [31:0] csr_wdata;
-  logic        csr_wdata_upper;
-  logic        csr_wdata_capture;
+  logic [63:0] csr_rdata;
+  logic [63:0] csr_wdata;
   logic        illegal_csr_insn_id;    // CSR access to non-existent register,
                                        // with wrong priviledge level,
                                        // or missing write permissions
@@ -472,10 +468,6 @@ module cve2_core import cve2_pkg::*; #(
     .csr_save_cause_o     (csr_save_cause),
     .csr_mtval_o          (csr_mtval),
     .csr_wdata_o          (csr_wdata),
-    .csr_wdata_upper_o    (csr_wdata_upper),
-    .csr_wdata_capture_o  (csr_wdata_capture),
-    .csr_rdata_upper_o    (csr_rdata_upper),
-    .csr_rdata_capture_o  (csr_rdata_capture),
     .priv_mode_i          (priv_mode_id),
     .csr_mstatus_tw_i     (csr_mstatus_tw),
     .illegal_csr_insn_i   (illegal_csr_insn_id),
@@ -796,13 +788,9 @@ module cve2_core import cve2_pkg::*; #(
       .csr_access_i(csr_access),
       .csr_addr_i  (csr_addr),
       .csr_wdata_i        (csr_wdata),
-      .csr_wdata_upper_i  (csr_wdata_upper),
-      .csr_wdata_capture_i(csr_wdata_capture),
       .csr_op_i    (csr_op),
       .csr_op_en_i (csr_op_en),
       .csr_rdata_o        (csr_rdata),
-      .csr_rdata_upper_i  (csr_rdata_upper),
-      .csr_rdata_capture_i(csr_rdata_capture),
 
       // Interrupt related control signals
       .irq_software_i   (irq_software_i),
@@ -866,7 +854,7 @@ module cve2_core import cve2_pkg::*; #(
     assign priv_mode_id       = PRIV_LVL_M;
     assign priv_mode_lsu      = PRIV_LVL_M;
     assign csr_mtvec          = 64'h0000_0000_0000_0000;
-    assign csr_rdata          = 32'h0000_0000;
+    assign csr_rdata          = 64'h0000_0000_0000_0000;
     assign irq_pending_o      = 1'b0;
     assign irqs               = '0;
     assign csr_mstatus_mie    = 1'b0;

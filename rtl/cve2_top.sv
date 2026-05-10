@@ -19,8 +19,7 @@ module cve2_top import cve2_pkg::*; #(
   parameter int unsigned MHPMCounterWidth = 40,
   parameter bit          RV32E            = 1'b0,
   parameter rv32m_e      RV32M            = RV32MNone,
-  parameter bit          XInterface       = 1'b0,
-  parameter bit          EnableCSRs       = 1'b0
+  parameter bit          XInterface       = 1'b0
 ) (
   // Clock and Reset
   input  logic                         clk_i,
@@ -45,10 +44,10 @@ module cve2_top import cve2_pkg::*; #(
   input  logic                         data_gnt_i,
   input  logic                         data_rvalid_i,
   output logic                         data_we_o,
-  output logic [3:0]                   data_be_o,
+  output logic [7:0]                   data_be_o,
   output logic [63:0]                  data_addr_o,
-  output logic [31:0]                  data_wdata_o,
-  input  logic [31:0]                  data_rdata_i,
+  output logic [63:0]                  data_wdata_o,
+  input  logic [63:0]                  data_rdata_i,
   input  logic                         data_err_i,
 
   // Core-V Extension Interface (CV-X-IF)
@@ -184,8 +183,7 @@ module cve2_top import cve2_pkg::*; #(
     .RV32B            (RV32B),
     .DbgTriggerEn     (DbgTriggerEn),
     .DbgHwBreakNum    (DbgHwBreakNum),
-    .XInterface       (XInterface),
-    .EnableCSRs       (EnableCSRs)
+    .XInterface       (XInterface)
   ) u_cve2_core (
     .clk_i(clk),
     .rst_ni,

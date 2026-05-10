@@ -74,11 +74,7 @@ module testbench;
   logic        csr_restore_dret_id_o;
   logic        csr_save_cause_o;
   logic [63:0] csr_mtval_o;
-  logic [31:0] csr_wdata_o;
-  logic        csr_wdata_upper_o;
-  logic        csr_wdata_capture_o;
-  logic        csr_rdata_upper_o;
-  logic        csr_rdata_capture_o;
+  logic [63:0] csr_wdata_o;
 
   logic        lsu_req_o;
   logic        lsu_we_o;
@@ -101,9 +97,9 @@ module testbench;
   logic        data_pmp_err;
   logic [63:0] data_addr;
   logic        data_we;
-  logic [3:0]  data_be;
-  logic [31:0] data_wdata;
-  logic [31:0] data_rdata;
+  logic [7:0]  data_be;
+  logic [63:0] data_wdata;
+  logic [63:0] data_rdata;
 
   logic [63:0] result_ex;
   logic [63:0] alu_adder_result_ex;
@@ -137,9 +133,9 @@ module testbench;
   logic [63:0] rf_wdata_mux;
   logic        rf_we_mux;
 
-  logic [31:0] data_mem [0:255];
+  logic [63:0] data_mem [0:255];
   logic        data_rvalid_next;
-  logic [31:0] data_rdata_next;
+  logic [63:0] data_rdata_next;
   logic        last_pc_set;
   logic [63:0] last_pc_target;
 
@@ -218,10 +214,6 @@ module testbench;
     .csr_save_cause_o,
     .csr_mtval_o,
     .csr_wdata_o,
-    .csr_wdata_upper_o,
-    .csr_wdata_capture_o,
-    .csr_rdata_upper_o,
-    .csr_rdata_capture_o,
     .priv_mode_i(PRIV_LVL_M),
     .csr_mstatus_tw_i(1'b0),
     .illegal_csr_insn_i(1'b0),
@@ -261,7 +253,7 @@ module testbench;
     .debug_ebreaku_i(1'b0),
     .trigger_match_i(1'b0),
     .result_ex_i(result_ex),
-    .csr_rdata_i(32'h0),
+    .csr_rdata_i(64'h0),
     .rf_raddr_a_o(rf_raddr_a),
     .rf_rdata_a_i(rf_rdata_a),
     .rf_raddr_b_o(rf_raddr_b),
@@ -429,6 +421,11 @@ module testbench;
     return {imm[12], imm[10:5], rs2, rs1, funct3, imm[4:1], imm[11], 7'b1100011};
   endfunction
 
+  function automatic logic [31:0] enc_j(input logic [20:0] imm,
+                                        input logic [4:0] rd);
+    return {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111};
+  endfunction
+
   task automatic set_pc64(input logic [63:0] pc);
     begin
       pc_id_i       = pc[31:0];
@@ -468,6 +465,11 @@ module testbench;
       last_pc_set = 1'b0;
       last_pc_target = 64'h0;
       cycles = 0;
+      #1;
+      if (pc_set_o) begin
+        last_pc_set = 1'b1;
+        last_pc_target = pc_target_ex;
+      end
       begin : wait_done
         forever begin
           @(posedge clk_i);
@@ -481,6 +483,10 @@ module testbench;
           end
           cycles++;
           if (instr_id_done_o && (!is_mem_op || mem_resp_seen)) begin
+            if (!is_mem_op && rf_we_wb && (dut_id.id_fsm_q != dut_id.FIRST_CYCLE)) begin
+              @(posedge clk_i);
+              #1;
+            end
             disable wait_done;
           end
           if (cycles > 30) begin
@@ -520,6 +526,17 @@ module testbench;
 
   task automatic check_mem(input string name, input int index, input logic [31:0] exp);
     begin
+      if (data_mem[index][31:0] !== exp) begin
+        $display("ERROR %s: mem[%0d] expected %h got %h", name, index, exp, data_mem[index][31:0]);
+        errors++;
+      end else begin
+        $display("PASS  %s: mem[%0d] = %h", name, index, exp);
+      end
+    end
+  endtask
+
+  task automatic check_mem64(input string name, input int index, input logic [63:0] exp);
+    begin
       if (data_mem[index] !== exp) begin
         $display("ERROR %s: mem[%0d] expected %h got %h", name, index, exp, data_mem[index]);
         errors++;
@@ -541,20 +558,24 @@ module testbench;
     if (!rst_ni) begin
       data_rvalid      <= 1'b0;
       data_rvalid_next <= 1'b0;
-      data_rdata       <= 32'h0;
-      data_rdata_next  <= 32'h0;
+      data_rdata       <= 64'h0;
+      data_rdata_next  <= 64'h0;
     end else begin
       data_rvalid <= data_rvalid_next;
       data_rdata  <= data_rdata_next;
 
       data_rvalid_next <= data_req;
-      data_rdata_next  <= data_mem[data_addr[9:2]];
+      data_rdata_next  <= data_mem[data_addr[10:3]];
 
       if (data_req && data_we) begin
-        if (data_be[0]) data_mem[data_addr[9:2]][7:0]   <= data_wdata[7:0];
-        if (data_be[1]) data_mem[data_addr[9:2]][15:8]  <= data_wdata[15:8];
-        if (data_be[2]) data_mem[data_addr[9:2]][23:16] <= data_wdata[23:16];
-        if (data_be[3]) data_mem[data_addr[9:2]][31:24] <= data_wdata[31:24];
+        if (data_be[0]) data_mem[data_addr[10:3]][ 7: 0] <= data_wdata[ 7: 0];
+        if (data_be[1]) data_mem[data_addr[10:3]][15: 8] <= data_wdata[15: 8];
+        if (data_be[2]) data_mem[data_addr[10:3]][23:16] <= data_wdata[23:16];
+        if (data_be[3]) data_mem[data_addr[10:3]][31:24] <= data_wdata[31:24];
+        if (data_be[4]) data_mem[data_addr[10:3]][39:32] <= data_wdata[39:32];
+        if (data_be[5]) data_mem[data_addr[10:3]][47:40] <= data_wdata[47:40];
+        if (data_be[6]) data_mem[data_addr[10:3]][55:48] <= data_wdata[55:48];
+        if (data_be[7]) data_mem[data_addr[10:3]][63:56] <= data_wdata[63:56];
       end
     end
   end
@@ -569,7 +590,7 @@ module testbench;
     instr_valid_i = 1'b0;
     instr_rdata_i = NOP;
     set_pc64(64'h0000_0000_0000_1000);
-    for (int i = 0; i < 256; i++) data_mem[i] = 32'h0;
+    for (int i = 0; i < 256; i++) data_mem[i] = 64'h0;
 
     @(posedge rst_ni);
     repeat (3) @(posedge clk_i);
@@ -638,28 +659,74 @@ module testbench;
     run_instr(enc_u(20'h00001, 5'd3, 7'b0010111), cycles);
     check_reg("AUIPC64", 5'd3, 64'h0000_0001_0000_2000);
 
-    data_mem[0] = 32'h0000_0080;
+    data_mem[0] = 64'h0000_0000_0000_0080;
     write_rf64(5'd1, 64'h0);
     run_instr(enc_i(12'h000, 5'd1, 3'b000, 5'd3, 7'b0000011), cycles);
     check_reg("LB64", 5'd3, 64'hffff_ffff_ffff_ff80);
     run_instr(enc_i(12'h000, 5'd1, 3'b100, 5'd3, 7'b0000011), cycles);
     check_reg("LBU64", 5'd3, 64'h0000_0000_0000_0080);
 
-    data_mem[0] = 32'h8000_0000;
+    data_mem[0] = 64'h0000_0000_8000_0000;
     run_instr(enc_i(12'h000, 5'd1, 3'b010, 5'd3, 7'b0000011), cycles);
     check_reg("LW64", 5'd3, 64'hffff_ffff_8000_0000);
     run_instr(enc_i(12'h000, 5'd1, 3'b110, 5'd3, 7'b0000011), cycles);
     check_reg("LWU64", 5'd3, 64'h0000_0000_8000_0000);
 
-    data_mem[0] = 32'h89ab_cdef;
-    data_mem[1] = 32'h0123_4567;
+    data_mem[0] = 64'h0123_4567_89ab_cdef;
     run_instr(enc_i(12'h000, 5'd1, 3'b011, 5'd3, 7'b0000011), cycles);
     check_reg("LD64", 5'd3, 64'h0123_4567_89ab_cdef);
 
     write_rf64(5'd2, 64'h1122_3344_5566_7788);
     run_instr(enc_s(12'h000, 5'd2, 5'd1, 3'b011), cycles);
-    check_mem("SD_LOWER", 0, 32'h5566_7788);
-    check_mem("SD_UPPER", 1, 32'h1122_3344);
+    check_mem64("SD64", 0, 64'h1122_3344_5566_7788);
+
+    data_mem[0] = 64'h7766_5544_3322_1100;
+    data_mem[1] = 64'hffee_ddcc_bbaa_9988;
+    run_instr(enc_i(12'h007, 5'd1, 3'b001, 5'd3, 7'b0000011), cycles);
+    check_reg("LH64_SPLIT_SIGN", 5'd3, 64'hffff_ffff_ffff_8877);
+    run_instr(enc_i(12'h007, 5'd1, 3'b101, 5'd3, 7'b0000011), cycles);
+    check_reg("LHU64_SPLIT", 5'd3, 64'h0000_0000_0000_8877);
+    run_instr(enc_i(12'h006, 5'd1, 3'b010, 5'd3, 7'b0000011), cycles);
+    check_reg("LW64_SPLIT_SIGN", 5'd3, 64'hffff_ffff_9988_7766);
+    run_instr(enc_i(12'h006, 5'd1, 3'b110, 5'd3, 7'b0000011), cycles);
+    check_reg("LWU64_SPLIT", 5'd3, 64'h0000_0000_9988_7766);
+
+    data_mem[2] = 64'h0000_0000_0000_0000;
+    write_rf64(5'd1, 64'h0000_0000_0000_0010);
+    write_rf64(5'd2, 64'h0000_0000_aabb_ccdd);
+    run_instr(enc_s(12'h003, 5'd2, 5'd1, 3'b000), cycles);
+    check_mem64("SB64_OFFSET3", 2, 64'h0000_0000_dd00_0000);
+    run_instr(enc_s(12'h006, 5'd2, 5'd1, 3'b001), cycles);
+    check_mem64("SH64_OFFSET6", 2, 64'hccdd_0000_dd00_0000);
+
+    data_mem[3] = 64'h0000_0000_0000_0000;
+    data_mem[4] = 64'h0000_0000_0000_0000;
+    write_rf64(5'd1, 64'h0000_0000_0000_0018);
+    write_rf64(5'd2, 64'h0000_0000_aabb_ccdd);
+    run_instr(enc_s(12'h006, 5'd2, 5'd1, 3'b010), cycles);
+    check_mem64("SW64_SPLIT_LO", 3, 64'hccdd_0000_0000_0000);
+    check_mem64("SW64_SPLIT_HI", 4, 64'h0000_0000_0000_aabb);
+
+    set_pc64(64'h0000_0001_0000_4000);
+    run_instr(enc_j(21'd16, 5'd5), cycles);
+    check_reg("JAL64_LINK", 5'd5, 64'h0000_0001_0000_4004);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0001_0000_4010) begin
+      $display("ERROR JAL64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  JAL64: target = %h", last_pc_target);
+    end
+
+    write_rf64(5'd1, 64'h0000_0002_0000_5003);
+    set_pc64(64'h0000_0001_0000_4000);
+    run_instr(enc_i(12'h005, 5'd1, 3'b000, 5'd5, 7'b1100111), cycles);
+    check_reg("JALR64_LINK", 5'd5, 64'h0000_0001_0000_4004);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0002_0000_5008) begin
+      $display("ERROR JALR64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  JALR64: target = %h", last_pc_target);
+    end
 
     write_rf64(5'd1, 64'hffff_ffff_ffff_ffff);
     write_rf64(5'd2, 64'hffff_ffff_ffff_ffff);
@@ -670,6 +737,53 @@ module testbench;
       errors++;
     end else begin
       $display("PASS  BEQ64: target = %h", last_pc_target);
+    end
+
+    write_rf64(5'd1, 64'hffff_ffff_ffff_fffe);
+    write_rf64(5'd2, 64'h0000_0000_0000_0001);
+    set_pc64(64'h0000_0000_0000_2100);
+    run_instr(enc_b(13'd12, 5'd2, 5'd1, 3'b001), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_210c) begin
+      $display("ERROR BNE64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BNE64: target = %h", last_pc_target);
+    end
+
+    set_pc64(64'h0000_0000_0000_2200);
+    run_instr(enc_b(13'd16, 5'd2, 5'd1, 3'b100), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_2210) begin
+      $display("ERROR BLT64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BLT64: target = %h", last_pc_target);
+    end
+
+    set_pc64(64'h0000_0000_0000_2300);
+    run_instr(enc_b(13'd20, 5'd1, 5'd2, 3'b101), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_2314) begin
+      $display("ERROR BGE64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BGE64: target = %h", last_pc_target);
+    end
+
+    set_pc64(64'h0000_0000_0000_2400);
+    run_instr(enc_b(13'd24, 5'd1, 5'd2, 3'b110), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_2418) begin
+      $display("ERROR BLTU64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BLTU64: target = %h", last_pc_target);
+    end
+
+    set_pc64(64'h0000_0000_0000_2500);
+    run_instr(enc_b(13'd28, 5'd2, 5'd1, 3'b111), cycles);
+    if (!last_pc_set || last_pc_target !== 64'h0000_0000_0000_251c) begin
+      $display("ERROR BGEU64: pc_set=%0b target=%h", last_pc_set, last_pc_target);
+      errors++;
+    end else begin
+      $display("PASS  BGEU64: target = %h", last_pc_target);
     end
 
     if (errors == 0) begin

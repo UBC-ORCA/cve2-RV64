@@ -29,9 +29,9 @@ module cve2_load_store_unit
 
   output logic [63:0]  data_addr_o,
   output logic         data_we_o,
-  output logic [3:0]   data_be_o,
-  output logic [31:0]  data_wdata_o,
-  input  logic [31:0]  data_rdata_i,
+  output logic [7:0]   data_be_o,
+  output logic [63:0]  data_wdata_o,
+  input  logic [63:0]  data_rdata_i,
 
   // signals to/from ID/EX stage
   input  logic         lsu_we_i,             // write enable                     -> from ID/EX
@@ -71,31 +71,28 @@ module cve2_load_store_unit
   logic         addr_update;
   logic         ctrl_update;
   logic         rdata_update;
-  logic [31:8]  rdata_q;
-  logic [1:0]   rdata_offset_q;
+  logic [63:8]  rdata_q;
+  logic [2:0]   rdata_offset_q;
   logic [1:0]   data_type_q;
   logic         data_sign_ext_q;
   logic         data_we_q;
 
-  logic [1:0]   data_offset;   // mux control for data to be written to memory
+  logic [2:0]   data_offset;   // mux control for data to be written to memory
 
-  logic [3:0]   data_be;
-  logic [31:0]  data_wdata;
-  logic [31:0]  store_wdata_word;
+  logic [7:0]   data_be;
+  logic [63:0]  data_wdata;
 
-  logic [31:0]  data_rdata_ext;
+  logic [63:0]  data_rdata_ext;
   logic [63:0]  data_rdata_full;
-  logic [31:0]  dword_lower_q;
 
-  logic [31:0]  rdata_w_ext; // word realignment for misaligned loads
-  logic [31:0]  rdata_h_ext; // sign extension for half words
-  logic [31:0]  rdata_b_ext; // sign extension for bytes
+  logic [63:0]  rdata_d_ext; // dword realignment for misaligned loads
+  logic [63:0]  rdata_w_ext; // word sign extension
+  logic [63:0]  rdata_h_ext; // sign extension for half words
+  logic [63:0]  rdata_b_ext; // sign extension for bytes
 
   logic         split_misaligned_access;
   logic         dword_access;
   logic         dword_misaligned;
-  logic         dword_lower_rvalid;
-  logic         subword_lower_rvalid;
   logic         handle_misaligned_q, handle_misaligned_d; // high after receiving grant for first
                                                           // part of a misaligned access
   logic         pmp_err_q, pmp_err_d;
@@ -111,7 +108,7 @@ module cve2_load_store_unit
   ls_fsm_e ls_fsm_cs, ls_fsm_ns;
 
   assign data_addr   = adder_result_ex_i;
-  assign data_offset = data_addr[1:0];
+  assign data_offset = data_addr[2:0];
 
   ///////////////////
   // BE generation //
@@ -122,91 +119,105 @@ module cve2_load_store_unit
       2'b00: begin // Writing a word
         if (!handle_misaligned_q) begin // first part of potentially misaligned transaction
           unique case (data_offset)
-            2'b00:   data_be = 4'b1111;
-            2'b01:   data_be = 4'b1110;
-            2'b10:   data_be = 4'b1100;
-            2'b11:   data_be = 4'b1000;
-            default: data_be = 4'b1111;
-          endcase // case (data_offset)
-        end else begin // second part of misaligned transaction
+            3'b000:  data_be = 8'b0000_1111;
+            3'b001:  data_be = 8'b0001_1110;
+            3'b010:  data_be = 8'b0011_1100;
+            3'b011:  data_be = 8'b0111_1000;
+            3'b100:  data_be = 8'b1111_0000;
+            3'b101:  data_be = 8'b1110_0000;
+            3'b110:  data_be = 8'b1100_0000;
+            3'b111:  data_be = 8'b1000_0000;
+            default: data_be = 8'b1111_1111;
+          endcase
+        end else begin // second part of misaligned transaction (only when crossing 8-byte boundary)
           unique case (data_offset)
-            2'b00:   data_be = 4'b0000; // this is not used, but included for completeness
-            2'b01:   data_be = 4'b0001;
-            2'b10:   data_be = 4'b0011;
-            2'b11:   data_be = 4'b0111;
-            default: data_be = 4'b1111;
-          endcase // case (data_offset)
+            3'b101:  data_be = 8'b0000_0001;
+            3'b110:  data_be = 8'b0000_0011;
+            3'b111:  data_be = 8'b0000_0111;
+            default: data_be = 8'b0000_0000;
+          endcase
         end
       end
 
       2'b01: begin // Writing a half word
         if (!handle_misaligned_q) begin // first part of potentially misaligned transaction
           unique case (data_offset)
-            2'b00:   data_be = 4'b0011;
-            2'b01:   data_be = 4'b0110;
-            2'b10:   data_be = 4'b1100;
-            2'b11:   data_be = 4'b1000;
-            default: data_be = 4'b1111;
-          endcase // case (data_offset)
-        end else begin // second part of misaligned transaction
-          data_be = 4'b0001;
+            3'b000:  data_be = 8'b0000_0011;
+            3'b001:  data_be = 8'b0000_0110;
+            3'b010:  data_be = 8'b0000_1100;
+            3'b011:  data_be = 8'b0001_1000;
+            3'b100:  data_be = 8'b0011_0000;
+            3'b101:  data_be = 8'b0110_0000;
+            3'b110:  data_be = 8'b1100_0000;
+            3'b111:  data_be = 8'b1000_0000;
+            default: data_be = 8'b0000_0011;
+          endcase
+        end else begin // second part of misaligned transaction (offset 7 only)
+          data_be = 8'b0000_0001;
         end
       end
 
       2'b10: begin // Writing a byte
         unique case (data_offset)
-          2'b00:   data_be = 4'b0001;
-          2'b01:   data_be = 4'b0010;
-          2'b10:   data_be = 4'b0100;
-          2'b11:   data_be = 4'b1000;
-          default: data_be = 4'b1111;
-        endcase // case (data_offset)
+          3'b000:  data_be = 8'b0000_0001;
+          3'b001:  data_be = 8'b0000_0010;
+          3'b010:  data_be = 8'b0000_0100;
+          3'b011:  data_be = 8'b0000_1000;
+          3'b100:  data_be = 8'b0001_0000;
+          3'b101:  data_be = 8'b0010_0000;
+          3'b110:  data_be = 8'b0100_0000;
+          3'b111:  data_be = 8'b1000_0000;
+          default: data_be = 8'b0000_0001;
+        endcase
       end
 
-      2'b11: begin // Writing one 32-bit beat of a doubleword
-        data_be = 4'b1111;
+      2'b11: begin // Writing a doubleword (must be 8-byte aligned)
+        data_be = 8'b1111_1111;
       end
 
-      default:     data_be = 4'b1111;
-    endcase // case (lsu_type_i)
+      default:     data_be = 8'b1111_1111;
+    endcase
   end
 
   /////////////////////
   // WData alignment //
   /////////////////////
 
-  assign store_wdata_word = (lsu_type_i == 2'b11 && handle_misaligned_q) ?
-                            lsu_wdata_i[63:32] : lsu_wdata_i[31:0];
-
-  // prepare data to be written to the memory
-  // we handle misaligned accesses, half word and byte accesses here
+  // prepare data to be written to the memory.
+  // For misaligned accesses that cross the 8-byte boundary the second beat
+  // wraps the upper bytes back into the low byte lanes.
   always_comb begin
     unique case (data_offset)
-      2'b00:   data_wdata =  store_wdata_word;
-      2'b01:   data_wdata = {store_wdata_word[23:0], store_wdata_word[31:24]};
-      2'b10:   data_wdata = {store_wdata_word[15:0], store_wdata_word[31:16]};
-      2'b11:   data_wdata = {store_wdata_word[ 7:0], store_wdata_word[31: 8]};
-      default: data_wdata =  store_wdata_word;
-    endcase // case (data_offset)
+      3'b000:  data_wdata =  lsu_wdata_i;
+      3'b001:  data_wdata = {lsu_wdata_i[55:0], lsu_wdata_i[63:56]};
+      3'b010:  data_wdata = {lsu_wdata_i[47:0], lsu_wdata_i[63:48]};
+      3'b011:  data_wdata = {lsu_wdata_i[39:0], lsu_wdata_i[63:40]};
+      3'b100:  data_wdata = {lsu_wdata_i[31:0], lsu_wdata_i[63:32]};
+      3'b101:  data_wdata = {lsu_wdata_i[23:0], lsu_wdata_i[63:24]};
+      3'b110:  data_wdata = {lsu_wdata_i[15:0], lsu_wdata_i[63:16]};
+      3'b111:  data_wdata = {lsu_wdata_i[ 7:0], lsu_wdata_i[63: 8]};
+      default: data_wdata =  lsu_wdata_i;
+    endcase
   end
 
   /////////////////////
   // RData alignment //
   /////////////////////
 
-  // register for unaligned rdata
+  // register for unaligned rdata: stores upper bytes from the first beat of
+  // a misaligned access so we can stitch them with the second beat.
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       rdata_q <= '0;
     end else if (rdata_update) begin
-      rdata_q <= data_rdata_i[31:8];
+      rdata_q <= data_rdata_i[63:8];
     end
   end
 
   // registers for transaction control
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      rdata_offset_q  <= 2'h0;
+      rdata_offset_q  <= 3'h0;
       data_type_q     <= 2'h0;
       data_sign_ext_q <= 1'b0;
       data_we_q       <= 1'b0;
@@ -215,14 +226,6 @@ module cve2_load_store_unit
       data_type_q     <= lsu_type_i;
       data_sign_ext_q <= lsu_sign_ext_i;
       data_we_q       <= lsu_we_i;
-    end
-  end
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin
-    if (!rst_ni) begin
-      dword_lower_q <= 32'h0000_0000;
-    end else if (dword_lower_rvalid) begin
-      dword_lower_q <= data_rdata_ext;
     end
   end
 
@@ -240,132 +243,104 @@ module cve2_load_store_unit
     end
   end
 
-  // take care of misaligned words
+  // ----------------------------------------------------------------
+  // Extract requested datum from the 64-bit memory word, handling
+  // misaligned accesses that span an 8-byte boundary by stitching the
+  // first beat (rdata_q) with the second beat (data_rdata_i).
+  // ----------------------------------------------------------------
+
+  logic [7:0]  rdata_b_raw;
+  logic [15:0] rdata_h_raw;
+  logic [31:0] rdata_w_raw;
+  logic [63:0] rdata_d_raw;
+
+  // Byte extraction: pick byte at rdata_offset_q within the 8-byte word.
   always_comb begin
     unique case (rdata_offset_q)
-      2'b00:   rdata_w_ext =  data_rdata_i[31:0];
-      2'b01:   rdata_w_ext = {data_rdata_i[ 7:0], rdata_q[31:8]};
-      2'b10:   rdata_w_ext = {data_rdata_i[15:0], rdata_q[31:16]};
-      2'b11:   rdata_w_ext = {data_rdata_i[23:0], rdata_q[31:24]};
-      default: rdata_w_ext =  data_rdata_i[31:0];
+      3'b000:  rdata_b_raw = data_rdata_i[ 7: 0];
+      3'b001:  rdata_b_raw = data_rdata_i[15: 8];
+      3'b010:  rdata_b_raw = data_rdata_i[23:16];
+      3'b011:  rdata_b_raw = data_rdata_i[31:24];
+      3'b100:  rdata_b_raw = data_rdata_i[39:32];
+      3'b101:  rdata_b_raw = data_rdata_i[47:40];
+      3'b110:  rdata_b_raw = data_rdata_i[55:48];
+      3'b111:  rdata_b_raw = data_rdata_i[63:56];
+      default: rdata_b_raw = data_rdata_i[ 7: 0];
     endcase
   end
 
-  ////////////////////
-  // Sign extension //
-  ////////////////////
-
-  // sign extension for half words
+  // Half-word extraction: 16 bits at rdata_offset_q. Offset 7 wraps using rdata_q.
   always_comb begin
     unique case (rdata_offset_q)
-      2'b00: begin
-        if (!data_sign_ext_q) begin
-          rdata_h_ext = {16'h0000, data_rdata_i[15:0]};
-        end else begin
-          rdata_h_ext = {{16{data_rdata_i[15]}}, data_rdata_i[15:0]};
-        end
-      end
-
-      2'b01: begin
-        if (!data_sign_ext_q) begin
-          rdata_h_ext = {16'h0000, data_rdata_i[23:8]};
-        end else begin
-          rdata_h_ext = {{16{data_rdata_i[23]}}, data_rdata_i[23:8]};
-        end
-      end
-
-      2'b10: begin
-        if (!data_sign_ext_q) begin
-          rdata_h_ext = {16'h0000, data_rdata_i[31:16]};
-        end else begin
-          rdata_h_ext = {{16{data_rdata_i[31]}}, data_rdata_i[31:16]};
-        end
-      end
-
-      2'b11: begin
-        if (!data_sign_ext_q) begin
-          rdata_h_ext = {16'h0000, data_rdata_i[7:0], rdata_q[31:24]};
-        end else begin
-          rdata_h_ext = {{16{data_rdata_i[7]}}, data_rdata_i[7:0], rdata_q[31:24]};
-        end
-      end
-
-      default: rdata_h_ext = {16'h0000, data_rdata_i[15:0]};
-    endcase // case (rdata_offset_q)
+      3'b000:  rdata_h_raw = data_rdata_i[15: 0];
+      3'b001:  rdata_h_raw = data_rdata_i[23: 8];
+      3'b010:  rdata_h_raw = data_rdata_i[31:16];
+      3'b011:  rdata_h_raw = data_rdata_i[39:24];
+      3'b100:  rdata_h_raw = data_rdata_i[47:32];
+      3'b101:  rdata_h_raw = data_rdata_i[55:40];
+      3'b110:  rdata_h_raw = data_rdata_i[63:48];
+      3'b111:  rdata_h_raw = {data_rdata_i[7:0], rdata_q[63:56]};
+      default: rdata_h_raw = data_rdata_i[15: 0];
+    endcase
   end
 
-  // sign extension for bytes
+  // Word extraction: 32 bits at rdata_offset_q. Offsets 5-7 wrap using rdata_q.
   always_comb begin
     unique case (rdata_offset_q)
-      2'b00: begin
-        if (!data_sign_ext_q) begin
-          rdata_b_ext = {24'h00_0000, data_rdata_i[7:0]};
-        end else begin
-          rdata_b_ext = {{24{data_rdata_i[7]}}, data_rdata_i[7:0]};
-        end
-      end
-
-      2'b01: begin
-        if (!data_sign_ext_q) begin
-          rdata_b_ext = {24'h00_0000, data_rdata_i[15:8]};
-        end else begin
-          rdata_b_ext = {{24{data_rdata_i[15]}}, data_rdata_i[15:8]};
-        end
-      end
-
-      2'b10: begin
-        if (!data_sign_ext_q) begin
-          rdata_b_ext = {24'h00_0000, data_rdata_i[23:16]};
-        end else begin
-          rdata_b_ext = {{24{data_rdata_i[23]}}, data_rdata_i[23:16]};
-        end
-      end
-
-      2'b11: begin
-        if (!data_sign_ext_q) begin
-          rdata_b_ext = {24'h00_0000, data_rdata_i[31:24]};
-        end else begin
-          rdata_b_ext = {{24{data_rdata_i[31]}}, data_rdata_i[31:24]};
-        end
-      end
-
-      default: rdata_b_ext = {24'h00_0000, data_rdata_i[7:0]};
-    endcase // case (rdata_offset_q)
+      3'b000:  rdata_w_raw = data_rdata_i[31: 0];
+      3'b001:  rdata_w_raw = data_rdata_i[39: 8];
+      3'b010:  rdata_w_raw = data_rdata_i[47:16];
+      3'b011:  rdata_w_raw = data_rdata_i[55:24];
+      3'b100:  rdata_w_raw = data_rdata_i[63:32];
+      3'b101:  rdata_w_raw = {data_rdata_i[ 7:0], rdata_q[63:40]};
+      3'b110:  rdata_w_raw = {data_rdata_i[15:0], rdata_q[63:48]};
+      3'b111:  rdata_w_raw = {data_rdata_i[23:0], rdata_q[63:56]};
+      default: rdata_w_raw = data_rdata_i[31: 0];
+    endcase
   end
 
-  // select word, half word or byte sign extended version
+  // Doubleword extraction: must be 8-byte aligned (offset 0). Misaligned dword
+  // accesses are reported via misaligned_err_d.
+  assign rdata_d_raw = data_rdata_i;
+
+  // Sign / zero extension to 64 bits.
+  assign rdata_b_ext = data_sign_ext_q ? {{56{rdata_b_raw[7]}},  rdata_b_raw}
+                                       : { 56'b0,               rdata_b_raw};
+  assign rdata_h_ext = data_sign_ext_q ? {{48{rdata_h_raw[15]}}, rdata_h_raw}
+                                       : { 48'b0,               rdata_h_raw};
+  assign rdata_w_ext = data_sign_ext_q ? {{32{rdata_w_raw[31]}}, rdata_w_raw}
+                                       : { 32'b0,               rdata_w_raw};
+  assign rdata_d_ext = rdata_d_raw;
+
+  // Final 64-bit load result
   always_comb begin
     unique case (data_type_q)
-      2'b00:       data_rdata_ext = rdata_w_ext;
-      2'b01:       data_rdata_ext = rdata_h_ext;
-      2'b10:       data_rdata_ext = rdata_b_ext;
-      2'b11:       data_rdata_ext = rdata_w_ext;
-      default:     data_rdata_ext = rdata_w_ext;
-    endcase // case (data_type_q)
+      2'b00:   data_rdata_ext = rdata_w_ext;
+      2'b01:   data_rdata_ext = rdata_h_ext;
+      2'b10:   data_rdata_ext = rdata_b_ext;
+      2'b11:   data_rdata_ext = rdata_d_ext;
+      default: data_rdata_ext = rdata_w_ext;
+    endcase
   end
 
-  always_comb begin
-    if (data_type_q == 2'b11) begin
-      data_rdata_full = {data_rdata_i, dword_lower_q};
-    end else if (data_sign_ext_q) begin
-      data_rdata_full = {{32{data_rdata_ext[31]}}, data_rdata_ext};
-    end else begin
-      data_rdata_full = {32'h0000_0000, data_rdata_ext};
-    end
-  end
+  assign data_rdata_full = data_rdata_ext;
 
   /////////////
   // LSU FSM //
   /////////////
 
-  // check for misaligned accesses that need to be split into two word-aligned accesses
+  // Doubleword accesses must be 8-byte aligned on the native 64-bit bus; any
+  // misalignment is reported as a fault so we never have to split a dword into
+  // two transactions.
   assign dword_access     = (lsu_type_i == 2'b11);
-  assign dword_misaligned = dword_access && (data_offset != 2'b00);
+  assign dword_misaligned = dword_access && (data_offset != 3'b000);
 
+  // Word and half-word accesses can still straddle the 8-byte boundary; those
+  // cases get split into two transactions just like the original LSU did
+  // for 32-bit-bus 4-byte boundaries.
   assign split_misaligned_access =
-      ((lsu_type_i == 2'b00) && (data_offset != 2'b00)) || // misaligned word access
-      ((lsu_type_i == 2'b01) && (data_offset == 2'b11)) || // misaligned half-word access
-      (dword_access && !dword_misaligned);                 // aligned doubleword access
+      ((lsu_type_i == 2'b00) && data_offset[2] && (data_offset[1:0] != 2'b00)) ||
+      ((lsu_type_i == 2'b01) && (data_offset == 3'b111));
 
   // FSM
   always_comb begin
@@ -521,26 +496,22 @@ module cve2_load_store_unit
 
   assign data_or_pmp_err    = lsu_err_q | data_err_i | pmp_err_q | misaligned_err_q;
 
-  assign dword_lower_rvalid = (data_type_q == 2'b11) &
-                              ((ls_fsm_cs == WAIT_RVALID_MIS) |
-                               (ls_fsm_cs == WAIT_RVALID_MIS_GNTS_DONE)) &
-                              data_rvalid_i & ~data_or_pmp_err & ~data_we_q;
-
-  assign subword_lower_rvalid = 1'b0;
-
   assign lsu_resp_valid_o = ((data_rvalid_i | pmp_err_q | misaligned_err_q) &
                              (ls_fsm_cs == IDLE));
 
   assign lsu_rdata_valid_o = ((ls_fsm_cs == IDLE) & data_rvalid_i &
                               ~data_or_pmp_err & ~data_we_q);
 
+  // Legacy dword-split write back signal: with the native 64-bit bus every
+  // load completes in one transaction, so the upper-half write-back is
+  // never used. Tied to 0 for downstream compatibility.
   assign lsu_rdata_upper_o = 1'b0;
 
   // output to register file
   assign lsu_rdata_o = data_rdata_full;
 
-  // output data address must be word aligned
-  assign data_addr_w_aligned = {data_addr[63:2], 2'b00};
+  // output data address must be doubleword aligned for the 64-bit bus
+  assign data_addr_w_aligned = {data_addr[63:3], 3'b000};
 
   // output to data interface
   assign data_addr_o   = data_addr_w_aligned;

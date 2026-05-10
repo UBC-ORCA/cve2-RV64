@@ -97,11 +97,7 @@ module cve2_id_stage #(
   output logic                      csr_restore_dret_id_o,
   output logic                      csr_save_cause_o,
   output logic [63:0]               csr_mtval_o,
-  output logic [31:0]               csr_wdata_o,
-  output logic                      csr_wdata_upper_o,
-  output logic                      csr_wdata_capture_o,
-  output logic                      csr_rdata_upper_o,
-  output logic                      csr_rdata_capture_o,
+  output logic [63:0]               csr_wdata_o,
   input  cve2_pkg::priv_lvl_e       priv_mode_i,
   input  logic                      csr_mstatus_tw_i,
   input  logic                      illegal_csr_insn_i,
@@ -160,7 +156,7 @@ module cve2_id_stage #(
 
   // Write back signal
   input  logic [63:0]               result_ex_i,
-  input  logic [31:0]               csr_rdata_i,
+  input  logic [63:0]               csr_rdata_i,
 
   // Register file read
   output logic [4:0]                rf_raddr_a_o,
@@ -317,15 +313,7 @@ module cve2_id_stage #(
   logic        signext_upper_cycle;
   logic [31:0] signext_upper_fill_q;
   logic [31:0] signext_upper_fill_now;
-  logic        csr_upper_cycle;
   logic        csr_is_imm_op;
-  logic        csr_src_needs_upper;
-  logic        csr_read_needs_upper;
-  logic        csr_need_upper_cycle;
-  logic        csr_src_needs_upper_q;
-  logic        csr_read_needs_upper_q;
-  logic [31:0] csr_src_lower_q;
-  logic [31:0] csr_src_lower_now;
 
   // Multiplier Control
   logic        mult_en_id, mult_en_dec;
@@ -366,8 +354,7 @@ module cve2_id_stage #(
     SHIFT_UPPER_CYCLE,
     PC_UPPER_CYCLE,
     ADDR_UPPER_CYCLE,
-    SIGNEXT_UPPER_CYCLE,
-    CSR_UPPER_CYCLE
+    SIGNEXT_UPPER_CYCLE
   } id_fsm_e;
   id_fsm_e id_fsm_q, id_fsm_d;
 
@@ -501,7 +488,7 @@ module cve2_id_stage #(
       IMM_B_U:         imm_b = {{32{imm_u_type[31]}}, imm_u_type};
       IMM_B_J:         imm_b = {{32{imm_j_type[31]}}, imm_j_type};
       IMM_B_INCR_PC:   imm_b = instr_is_compressed_i ? 64'h2 : 64'h4;
-      IMM_B_INCR_ADDR: imm_b = 64'h4;
+      IMM_B_INCR_ADDR: imm_b = 64'h8;
       default:         imm_b = 64'h4;
     endcase
   end
@@ -564,22 +551,6 @@ module cve2_id_stage #(
     end
   end
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin : csr_state_reg
-    if (!rst_ni) begin
-      csr_src_needs_upper_q  <= 1'b0;
-      csr_read_needs_upper_q <= 1'b0;
-      csr_src_lower_q        <= 32'h0000_0000;
-    end else if (instr_executing_spec && csr_need_upper_cycle) begin
-      csr_src_needs_upper_q  <= csr_src_needs_upper;
-      csr_read_needs_upper_q <= csr_read_needs_upper;
-      csr_src_lower_q        <= csr_src_lower_now;
-    end else if (instr_done && csr_upper_cycle) begin
-      csr_src_needs_upper_q  <= 1'b0;
-      csr_read_needs_upper_q <= 1'b0;
-      csr_src_lower_q        <= 32'h0000_0000;
-    end
-  end
-
   // Carry register: captures lower-cycle carry for adder-class 2-cycle ops.
   // Cleared otherwise so stale carries can't leak into a subsequent op.
   always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
@@ -605,7 +576,7 @@ module cve2_id_stage #(
   always_comb begin : rf_wdata_id_mux
     unique case ($bits(rf_wd_sel_e)'({rf_wdata_sel}))
       RF_WD_EX:     rf_wdata_id_o   = result_ex_i;
-      RF_WD_CSR:    rf_wdata_id_o   = {32'h0000_0000, csr_rdata_i};
+      RF_WD_CSR:    rf_wdata_id_o   = csr_rdata_i;
       RF_WD_COPROC: rf_wdata_id_o   = XInterface ? {32'h0000_0000, x_result_i.data} :
                                                    result_ex_i;
       default:      rf_wdata_id_o   = result_ex_i;
@@ -969,22 +940,10 @@ module cve2_id_stage #(
   assign signext_upper_cycle    = (id_fsm_q == SIGNEXT_UPPER_CYCLE);
   assign signext_upper_fill_now = {32{result_ex_i[31]}};
 
-  assign csr_upper_cycle      = EnableCSRs && (id_fsm_q == CSR_UPPER_CYCLE);
-  assign csr_is_imm_op        = (alu_op_a_mux_sel == OP_A_IMM);
-  assign csr_src_lower_now    = csr_is_imm_op ? imm_a[31:0] : rf_rdata_a_i[31:0];
-  assign csr_src_needs_upper  = EnableCSRs &&
-                                csr_access_o &&
-                                (csr_op_o != CSR_OP_READ) &&
-                                !csr_is_imm_op;
-
-  assign csr_read_needs_upper = EnableCSRs &&
-                                csr_access_o &&
-                                rf_we_dec &&
-                                (rf_waddr_id_o != 5'd0);
-  assign csr_need_upper_cycle = EnableCSRs &&
-                                (id_fsm_q == FIRST_CYCLE) &&
-                                csr_access_o &&
-                                (csr_src_needs_upper || csr_read_needs_upper);
+  // Native 64-bit CSR access: csr_wdata_o is the full source operand each cycle.
+  // CSRRWI/CSRRSI/CSRRCI use a 5-bit zero-extended immediate; everything else
+  // uses the 64-bit source register.
+  assign csr_is_imm_op = (alu_op_a_mux_sel == OP_A_IMM);
 
   assign lsu_req_o               = lsu_req;
   assign lsu_we_o                = lsu_we;
@@ -993,17 +952,7 @@ module cve2_id_stage #(
   assign lsu_store_upper_half    = 1'b0;
   assign lsu_wdata_o             = rf_rdata_b_i;
   assign csr_op_en_o             = EnableCSRs & csr_access_o & instr_executing & instr_id_done_o;
-  assign csr_wdata_o             = (csr_upper_cycle && csr_src_needs_upper_q) ?
-                                    rf_rdata_a_i[31:0] :
-                                    (csr_upper_cycle ? csr_src_lower_q : csr_src_lower_now);
-  assign csr_wdata_upper_o       = csr_upper_cycle && csr_src_needs_upper_q;
-  assign csr_wdata_capture_o     = instr_executing_spec &&
-                                    csr_need_upper_cycle &&
-                                    csr_src_needs_upper;
-  assign csr_rdata_upper_o       = csr_upper_cycle && csr_read_needs_upper_q;
-  assign csr_rdata_capture_o     = instr_executing_spec &&
-                                    csr_need_upper_cycle &&
-                                    csr_read_needs_upper;
+  assign csr_wdata_o             = csr_is_imm_op ? imm_a : rf_rdata_a_i;
 
   assign alu_operator_ex_o           = alu_operator_eff;
   assign alu_operand_a_ex_o          = alu_operand_a;
@@ -1142,12 +1091,6 @@ module cve2_id_stage #(
               end
               // else: 1-cycle, stays in FIRST_CYCLE
             end
-            csr_access_o: begin
-              if (csr_need_upper_cycle) begin
-                id_fsm_d  = CSR_UPPER_CYCLE;
-                stall_alu = 1'b1;
-              end
-            end
             alu_multicycle_dec: begin
               stall_alu     = 1'b1;
               id_fsm_d      = MULTI_CYCLE;
@@ -1262,13 +1205,6 @@ module cve2_id_stage #(
         SIGNEXT_UPPER_CYCLE: begin
           id_fsm_d        = FIRST_CYCLE;
           rf_w_upper_id_o = 1'b1;
-        end
-
-        CSR_UPPER_CYCLE: begin
-          id_fsm_d        = FIRST_CYCLE;
-          rf_we_raw       = csr_read_needs_upper_q ? rf_we_dec : 1'b0;
-          rf_w_upper_id_o = csr_read_needs_upper_q;
-          r_a_upper_o     = csr_src_needs_upper_q;
         end
 
         default: begin

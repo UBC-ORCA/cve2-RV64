@@ -46,14 +46,10 @@ module cve2_cs_registers #(
   // Interface to registers (SRAM like)
   input  logic                 csr_access_i,
   input  cve2_pkg::csr_num_e   csr_addr_i,
-  input  logic [31:0]          csr_wdata_i,
-  input  logic                 csr_wdata_upper_i,
-  input  logic                 csr_wdata_capture_i,
+  input  logic [63:0]          csr_wdata_i,
   input  cve2_pkg::csr_op_e    csr_op_i,
   input                        csr_op_en_i,
-  output logic [31:0]          csr_rdata_o,
-  input  logic                 csr_rdata_upper_i,
-  input  logic                 csr_rdata_capture_i,
+  output logic [63:0]          csr_rdata_o,
 
   // interrupts
   input  logic                 irq_software_i,
@@ -232,8 +228,6 @@ import cve2_pkg::*;
   logic [63:0] csr_wdata_int;
   logic [63:0] csr_wdata_full;
   logic [63:0] csr_rdata_int;
-  logic [31:0] csr_wdata_lower_q;
-  logic [31:0] csr_rdata_upper_q;
   logic        csr_we_int;
   logic        csr_wr;
 
@@ -489,24 +483,9 @@ import cve2_pkg::*;
     end
   end
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin : csr_half_capture_reg
-    if (!rst_ni) begin
-      csr_wdata_lower_q <= 32'h0000_0000;
-      csr_rdata_upper_q <= 32'h0000_0000;
-    end else begin
-      if (csr_wdata_capture_i) begin
-        csr_wdata_lower_q <= csr_wdata_i;
-      end
-      if (csr_rdata_capture_i) begin
-        csr_rdata_upper_q <= csr_rdata_int[63:32];
-      end
-    end
-  end
-
-  assign csr_wdata_full = csr_wdata_upper_i ?
-                          {csr_wdata_i, csr_wdata_lower_q} :
-                          {32'h0000_0000, csr_wdata_i};
-  assign csr_rdata_o     = csr_rdata_upper_i ? csr_rdata_upper_q : csr_rdata_int[31:0];
+  // Native 64-bit CSR I/O: write data and read data are full width every cycle.
+  assign csr_wdata_full = csr_wdata_i;
+  assign csr_rdata_o    = csr_rdata_int;
 
   // write logic
   always_comb begin
