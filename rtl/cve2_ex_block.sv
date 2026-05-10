@@ -18,9 +18,10 @@ module cve2_ex_block #(
 
   // ALU
   input  cve2_pkg::alu_op_e     alu_operator_i,
-  input  logic [31:0]           alu_operand_a_i,
-  input  logic [31:0]           alu_operand_b_i,
+  input  logic [63:0]           alu_operand_a_i,
+  input  logic [63:0]           alu_operand_b_i,
   input  logic                  alu_instr_first_cycle_i,
+  input  logic                  alu_word_op_i,
 
   // Multiplier/Divider
   input  cve2_pkg::md_op_e      multdiv_operator_i,
@@ -37,18 +38,23 @@ module cve2_ex_block #(
   output logic [33:0]           imd_val_d_o[2],
   input  logic [33:0]           imd_val_q_i[2],
 
+  input  logic                  carry_in_i,
+  output logic                  carry_out_o,
+
   // Outputs
-  output logic [31:0]           alu_adder_result_ex_o, // to LSU
-  output logic [31:0]           result_ex_o,
-  output logic [31:0]           branch_target_o,       // to IF
+  output logic [63:0]           alu_adder_result_ex_o, // to LSU
+  output logic [63:0]           result_ex_o,
+  output logic [63:0]           branch_target_o,       // to IF
   output logic                  branch_decision_o,     // to ID
+  output logic                  alu_is_equal_result_o, // to ID
 
   output logic                  ex_valid_o             // EX has valid output
 );
 
   import cve2_pkg::*;
 
-  logic [31:0] alu_result, multdiv_result;
+  logic [63:0] alu_result;
+  logic [31:0] multdiv_result;
 
   logic [32:0] multdiv_alu_operand_b, multdiv_alu_operand_a;
   logic [33:0] alu_adder_result_ext;
@@ -79,10 +85,11 @@ module cve2_ex_block #(
 
   assign alu_imd_val_q = '{imd_val_q_i[0][31:0], imd_val_q_i[1][31:0]};
 
-  assign result_ex_o  = multdiv_sel ? multdiv_result : alu_result;
+  assign result_ex_o  = multdiv_sel ? {32'h0000_0000, multdiv_result} : alu_result;
 
   // branch handling
   assign branch_decision_o  = alu_cmp_result;
+  assign alu_is_equal_result_o = alu_is_equal_result;
 
   // Unused bt_operand signals cause lint errors, this avoids them
   //logic [31:0] unused_bt_a_operand, unused_bt_b_operand;
@@ -100,9 +107,12 @@ module cve2_ex_block #(
     .operand_a_i        (alu_operand_a_i),
     .operand_b_i        (alu_operand_b_i),
     .instr_first_cycle_i(alu_instr_first_cycle_i),
+    .word_op_i          (alu_word_op_i),
     .imd_val_q_i        (alu_imd_val_q),
     .imd_val_we_o       (alu_imd_val_we),
     .imd_val_d_o        (alu_imd_val_d),
+    .carry_in_i         (carry_in_i),
+    .carry_out_o        (carry_out_o),
     .multdiv_operand_a_i(multdiv_alu_operand_a),
     .multdiv_operand_b_i(multdiv_alu_operand_b),
     .multdiv_sel_i      (multdiv_sel),
@@ -130,7 +140,7 @@ module cve2_ex_block #(
       .op_a_i            (multdiv_operand_a_i),
       .op_b_i            (multdiv_operand_b_i),
       .alu_adder_ext_i   (alu_adder_result_ext),
-      .alu_adder_i       (alu_adder_result_ex_o),
+      .alu_adder_i       (alu_adder_result_ex_o[31:0]),
       .equal_to_zero_i   (alu_is_equal_result),
       .valid_o           (multdiv_valid),
       .alu_operand_a_o   (multdiv_alu_operand_a),
@@ -158,7 +168,7 @@ module cve2_ex_block #(
       .alu_operand_a_o   (multdiv_alu_operand_a),
       .alu_operand_b_o   (multdiv_alu_operand_b),
       .alu_adder_ext_i   (alu_adder_result_ext),
-      .alu_adder_i       (alu_adder_result_ex_o),
+      .alu_adder_i       (alu_adder_result_ex_o[31:0]),
       .equal_to_zero_i   (alu_is_equal_result),
       .imd_val_q_i       (imd_val_q_i),
       .imd_val_d_o       (multdiv_imd_val_d),

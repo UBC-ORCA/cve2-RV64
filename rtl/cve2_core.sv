@@ -34,13 +34,13 @@ module cve2_core import cve2_pkg::*; #(
   input  logic                         test_en_i,
 
   input  logic [31:0]                  hart_id_i,
-  input  logic [31:0]                  boot_addr_i,
+  input  logic [63:0]                  boot_addr_i,
 
   // Instruction memory interface
   output logic                         instr_req_o,
   input  logic                         instr_gnt_i,
   input  logic                         instr_rvalid_i,
-  output logic [31:0]                  instr_addr_o,
+  output logic [63:0]                  instr_addr_o,
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
@@ -49,10 +49,10 @@ module cve2_core import cve2_pkg::*; #(
   input  logic                         data_gnt_i,
   input  logic                         data_rvalid_i,
   output logic                         data_we_o,
-  output logic [3:0]                   data_be_o,
-  output logic [31:0]                  data_addr_o,
-  output logic [31:0]                  data_wdata_o,
-  input  logic [31:0]                  data_rdata_i,
+  output logic [7:0]                   data_be_o,
+  output logic [63:0]                  data_addr_o,
+  output logic [63:0]                  data_wdata_o,
+  input  logic [63:0]                  data_rdata_i,
   input  logic                         data_err_i,
 
   // Core-V Extension Interface (CV-X-IF)
@@ -85,8 +85,8 @@ module cve2_core import cve2_pkg::*; #(
   // Debug Interface
   input  logic                         debug_req_i,
   output logic                         debug_halted_o,
-  input  logic [31:0]                  dm_halt_addr_i,
-  input  logic [31:0]                  dm_exception_addr_i,
+  input  logic [63:0]                  dm_halt_addr_i,
+  input  logic [63:0]                  dm_exception_addr_i,
   output crash_dump_t                  crash_dump_o,
   // SEC_CM: EXCEPTION.CTRL_FLOW.LOCAL_ESC
   // SEC_CM: EXCEPTION.CTRL_FLOW.GLOBAL_ESC
@@ -144,8 +144,8 @@ module cve2_core import cve2_pkg::*; #(
   logic        instr_fetch_err;                // Bus error on instr fetch
   logic        instr_fetch_err_plus2;          // Instruction error is misaligned
   logic        illegal_c_insn_id;              // Illegal compressed instruction sent to ID stage
-  logic [31:0] pc_if;                          // Program counter in IF stage
-  logic [31:0] pc_id;                          // Program counter in ID stage
+  logic [63:0] pc_if;                          // Program counter in IF stage
+  logic [63:0] pc_id;                          // Program counter in ID stage
   logic [33:0] imd_val_d_ex[2];                // Intermediate register for multicycle Ops
   logic [33:0] imd_val_q_ex[2];                // Intermediate register for multicycle Ops
   logic [1:0]  imd_val_we_ex;
@@ -162,11 +162,14 @@ module cve2_core import cve2_pkg::*; #(
 
   // LSU signals
   logic        lsu_addr_incr_req;
-  logic [31:0] lsu_addr_last;
+  logic [63:0] lsu_addr_last;
+  logic [63:0] lsu_addr_ex;
 
   // Jump and branch target and decision (EX->IF)
-  logic [31:0] branch_target_ex;
+  logic [63:0] pc_target_ex;
+  logic [63:0] branch_target_ex_unused;
   logic        branch_decision;
+  logic        alu_is_equal_result;
 
   // Core busy signals
   logic        ctrl_busy;
@@ -175,30 +178,34 @@ module cve2_core import cve2_pkg::*; #(
 
   // Register File
   logic [4:0]  rf_raddr_a;
-  logic [31:0] rf_rdata_a;
+  logic [63:0] rf_rdata_a;
   logic [4:0]  rf_raddr_b;
-  logic [31:0] rf_rdata_b;
+  logic [63:0] rf_rdata_b;
   logic        rf_ren_a;
   logic        rf_ren_b;
   logic [4:0]  rf_waddr_wb;
-  logic [31:0] rf_wdata_wb;
+  logic [63:0] rf_wdata_wb;
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
-  logic [31:0] rf_wdata_lsu;
+  logic [63:0] rf_wdata_lsu;
   logic        rf_we_wb;
   logic        rf_we_lsu;
 
   logic [4:0]  rf_waddr_id;
-  logic [31:0] rf_wdata_id;
+  logic [63:0] rf_wdata_id;
   logic        rf_we_id;
 
   // ALU Control
   alu_op_e     alu_operator_ex;
-  logic [31:0] alu_operand_a_ex;
-  logic [31:0] alu_operand_b_ex;
+  logic [63:0] alu_operand_a_ex;
+  logic [63:0] alu_operand_b_ex;
+  logic        alu_word_op_ex;
 
-  logic [31:0] alu_adder_result_ex;    // Used to forward computed address to LSU
-  logic [31:0] result_ex;
+  logic [63:0] alu_adder_result_ex;    // Used to forward computed address to LSU
+  logic [63:0] result_ex;
+
+  logic        carry_in;
+  logic        carry_out;
 
   // Multiplier Control
   logic        mult_en_ex;
@@ -215,8 +222,8 @@ module cve2_core import cve2_pkg::*; #(
   csr_op_e     csr_op;
   logic        csr_op_en;
   csr_num_e    csr_addr;
-  logic [31:0] csr_rdata;
-  logic [31:0] csr_wdata;
+  logic [63:0] csr_rdata;
+  logic [63:0] csr_wdata;
   logic        illegal_csr_insn_id;    // CSR access to non-existent register,
                                        // with wrong priviledge level,
                                        // or missing write permissions
@@ -226,7 +233,7 @@ module cve2_core import cve2_pkg::*; #(
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
   logic        lsu_req;
-  logic [31:0] lsu_wdata;
+  logic [63:0] lsu_wdata;
 
   // stall control
   logic        id_in_ready;
@@ -246,7 +253,7 @@ module cve2_core import cve2_pkg::*; #(
   logic        nmi_mode;
   irqs_t       irqs;
   logic        csr_mstatus_mie;
-  logic [31:0] csr_mepc, csr_depc;
+  logic [63:0] csr_mepc, csr_depc;
 
   // PMP signals
   logic [33:0]  csr_pmp_addr [PMPNumRegions];
@@ -261,8 +268,8 @@ module cve2_core import cve2_pkg::*; #(
   logic        csr_restore_dret_id;
   logic        csr_save_cause;
   logic        csr_mtvec_init;
-  logic [31:0] csr_mtvec;
-  logic [31:0] csr_mtval;
+  logic [63:0] csr_mtvec;
+  logic [63:0] csr_mtval;
   logic        csr_mstatus_tw;
   priv_lvl_e   priv_mode_id;
   priv_lvl_e   priv_mode_lsu;
@@ -351,7 +358,7 @@ module cve2_core import cve2_pkg::*; #(
     .exc_cause             (exc_cause),
 
     // branch targets
-    .branch_target_ex_i(branch_target_ex),
+    .branch_target_ex_i(pc_target_ex),
 
     // CSRs
     .csr_mepc_i      (csr_mepc),  // exception return address
@@ -404,6 +411,7 @@ module cve2_core import cve2_pkg::*; #(
 
     // Jumps and branches
     .branch_decision_i(branch_decision),
+    .alu_is_equal_result_i(alu_is_equal_result),
 
     // IF and ID control signals
     .instr_first_cycle_id_o(instr_first_cycle_id),
@@ -419,7 +427,7 @@ module cve2_core import cve2_pkg::*; #(
     .instr_fetch_err_plus2_i(instr_fetch_err_plus2),
     .illegal_c_insn_i       (illegal_c_insn_id),
 
-    .pc_id_i(pc_id),
+    .pc_id_i      (pc_id),
 
     // Stalls
     .ex_valid_i      (ex_valid),
@@ -428,6 +436,7 @@ module cve2_core import cve2_pkg::*; #(
     .alu_operator_ex_o (alu_operator_ex),
     .alu_operand_a_ex_o(alu_operand_a_ex),
     .alu_operand_b_ex_o(alu_operand_b_ex),
+    .alu_word_op_ex_o  (alu_word_op_ex),
 
     .imd_val_q_ex_o (imd_val_q_ex),
     .imd_val_d_ex_i (imd_val_d_ex),
@@ -452,9 +461,12 @@ module cve2_core import cve2_pkg::*; #(
     .csr_restore_dret_id_o(csr_restore_dret_id),  // restore mstatus upon MRET
     .csr_save_cause_o     (csr_save_cause),
     .csr_mtval_o          (csr_mtval),
+    .csr_wdata_o          (csr_wdata),
     .priv_mode_i          (priv_mode_id),
     .csr_mstatus_tw_i     (csr_mstatus_tw),
     .illegal_csr_insn_i   (illegal_csr_insn_id),
+    .carry_in_o           (carry_in),
+    .carry_out_i          (carry_out),
 
     // LSU
     .lsu_req_o     (lsu_req),  // to load store unit
@@ -479,6 +491,8 @@ module cve2_core import cve2_pkg::*; #(
 
     // Register Interface
     .x_register_o(x_register_o),
+    .lsu_addr_ex_o(lsu_addr_ex),
+    .pc_target_ex_o(pc_target_ex),
 
     // Commit Interface
     .x_commit_valid_o(x_commit_valid_o),
@@ -508,7 +522,7 @@ module cve2_core import cve2_pkg::*; #(
 
     // write data to commit in the register file
     .result_ex_i(result_ex),
-    .csr_rdata_i(csr_rdata),
+    .csr_rdata_i    (csr_rdata),
 
     .rf_raddr_a_o      (rf_raddr_a),
     .rf_rdata_a_i      (rf_rdata_a),
@@ -548,6 +562,7 @@ module cve2_core import cve2_pkg::*; #(
     .alu_operand_a_i        (alu_operand_a_ex),
     .alu_operand_b_i        (alu_operand_b_ex),
     .alu_instr_first_cycle_i(instr_first_cycle_id),
+    .alu_word_op_i          (alu_word_op_ex),
 
     // Multipler/Divider signal from ID stage
     .multdiv_operator_i   (multdiv_operator_ex),
@@ -564,12 +579,16 @@ module cve2_core import cve2_pkg::*; #(
     .imd_val_d_o (imd_val_d_ex),
     .imd_val_q_i (imd_val_q_ex),
 
+    .carry_in_i  (carry_in),
+    .carry_out_o (carry_out),
+
     // Outputs
     .alu_adder_result_ex_o(alu_adder_result_ex),  // to LSU
     .result_ex_o          (result_ex),  // to ID
 
-    .branch_target_o  (branch_target_ex),  // to IF
+    .branch_target_o  (branch_target_ex_unused),
     .branch_decision_o(branch_decision),  // to ID
+    .alu_is_equal_result_o(alu_is_equal_result),
 
     .ex_valid_o(ex_valid)
   );
@@ -608,7 +627,7 @@ module cve2_core import cve2_pkg::*; #(
     .lsu_rdata_valid_o(rf_we_lsu),
     .lsu_req_i        (lsu_req),
 
-    .adder_result_ex_i(alu_adder_result_ex),
+    .adder_result_ex_i(lsu_addr_ex),
 
     .addr_incr_req_o(lsu_addr_incr_req),
     .addr_last_o    (lsu_addr_last),
@@ -698,8 +717,8 @@ module cve2_core import cve2_pkg::*; #(
   ////////////////////////
   cve2_register_file_ff #(
     .RV32E            (RV32E),
-    .DataWidth        (32),
-    .WordZeroVal      (32'h0)
+    .DataWidth        (64),
+    .WordZeroVal      (64'h0)
   ) register_file_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),
@@ -720,7 +739,6 @@ module cve2_core import cve2_pkg::*; #(
   // CSRs (Control and Status Registers) //
   /////////////////////////////////////////
 
-  assign csr_wdata  = alu_operand_a_ex;
   assign csr_addr   = csr_num_e'(csr_access ? alu_operand_b_ex[11:0] : 12'b0);
 
   if (EnableCSRs) begin : g_csrs
@@ -752,10 +770,10 @@ module cve2_core import cve2_pkg::*; #(
       // Interface to CSRs     ( SRAM like                    )
       .csr_access_i(csr_access),
       .csr_addr_i  (csr_addr),
-      .csr_wdata_i (csr_wdata),
+      .csr_wdata_i        (csr_wdata),
       .csr_op_i    (csr_op),
       .csr_op_en_i (csr_op_en),
-      .csr_rdata_o (csr_rdata),
+      .csr_rdata_o        (csr_rdata),
 
       // Interrupt related control signals
       .irq_software_i   (irq_software_i),
@@ -815,29 +833,20 @@ module cve2_core import cve2_pkg::*; #(
     assign rvfi_csr_mcause = cs_registers_i.mcause_q[5:0];
     assign rvfi_csr_mcycle = cs_registers_i.mcycle_counter_i.counter_val_o;
 `endif
-
-    // These assertions are in top-level as instr_valid_id required as the enable term
-    `ASSERT(CVE2CsrOpValid, instr_valid_id |-> csr_op inside {
-        CSR_OP_READ,
-        CSR_OP_WRITE,
-        CSR_OP_SET,
-        CSR_OP_CLEAR
-        })
-    `ASSERT_KNOWN_IF(CVE2CsrWdataIntKnown, cs_registers_i.csr_wdata_int, csr_op_en)
   end else begin : g_no_csrs
     assign priv_mode_id       = PRIV_LVL_M;
     assign priv_mode_lsu      = PRIV_LVL_M;
-    assign csr_mtvec          = 32'h0;
-    assign csr_rdata          = 32'h0;
+    assign csr_mtvec          = 64'h0000_0000_0000_0000;
+    assign csr_rdata          = 64'h0000_0000_0000_0000;
     assign irq_pending_o      = 1'b0;
     assign irqs               = '0;
     assign csr_mstatus_mie    = 1'b0;
     assign csr_mstatus_tw     = 1'b0;
-    assign csr_mepc           = 32'h0;
+    assign csr_mepc           = 64'h0000_0000_0000_0000;
     assign csr_pmp_cfg        = '{default:'0};
     assign csr_pmp_addr       = '{default:'0};
     assign csr_pmp_mseccfg    = '0;
-    assign csr_depc           = 32'h0;
+    assign csr_depc           = 64'h0000_0000_0000_0000;
     assign debug_single_step  = 1'b0;
     assign debug_ebreakm      = 1'b0;
     assign debug_ebreaku      = 1'b0;
@@ -851,15 +860,26 @@ module cve2_core import cve2_pkg::*; #(
 `endif
   end
 
+  // These assertions are in top-level as instr_valid_id required as the enable term
+  if (EnableCSRs) begin : g_csr_assertions
+    `ASSERT(CVE2CsrOpValid, instr_valid_id |-> csr_op inside {
+      CSR_OP_READ,
+      CSR_OP_WRITE,
+      CSR_OP_SET,
+      CSR_OP_CLEAR
+      })
+    `ASSERT_KNOWN_IF(CVE2CsrWdataIntKnown, g_csrs.cs_registers_i.csr_wdata_int, csr_op_en)
+  end
+
   if (PMPEnable) begin : g_pmp
     logic [33:0] pmp_req_addr [PMP_NUM_CHAN];
     pmp_req_e    pmp_req_type [PMP_NUM_CHAN];
     priv_lvl_e   pmp_priv_lvl [PMP_NUM_CHAN];
 
-    assign pmp_req_addr[PMP_I]  = {2'b00, pc_if};
+    assign pmp_req_addr[PMP_I]  = {2'b00, pc_if[31:0]};
     assign pmp_req_type[PMP_I]  = PMP_ACC_EXEC;
     assign pmp_priv_lvl[PMP_I]  = priv_mode_id;
-    assign pmp_req_addr[PMP_I2] = {2'b00, (pc_if + 32'd2)};
+    assign pmp_req_addr[PMP_I2] = {2'b00, (pc_if[31:0] + 32'd2)};
     assign pmp_req_type[PMP_I2] = PMP_ACC_EXEC;
     assign pmp_priv_lvl[PMP_I2] = priv_mode_id;
     assign pmp_req_addr[PMP_D]  = {2'b00, data_addr_o[31:0]};
@@ -1235,9 +1255,9 @@ module cve2_core import cve2_pkg::*; #(
             rvfi_stage_trap[i]            <= rvfi_trap_id;
             if (rvfi_intr_d) begin
                 if (captured_irq) begin
-                    rvfi_stage_intr[i] <= { rvfi_csr_mcause, 3'b101};
+                    rvfi_stage_intr[i] <= {rvfi_csr_mcause, 3'b101};
                 end else begin
-                    rvfi_stage_intr[i] <= { rvfi_csr_mcause, 3'b011};
+                    rvfi_stage_intr[i] <= {rvfi_csr_mcause, 3'b011};
                 end
             end
             else
@@ -1250,8 +1270,8 @@ module cve2_core import cve2_pkg::*; #(
             rvfi_stage_rs1_addr[i]        <= rvfi_rs1_addr_d;
             rvfi_stage_rs2_addr[i]        <= rvfi_rs2_addr_d;
             rvfi_stage_rs3_addr[i]        <= rvfi_rs3_addr_d;
-            rvfi_stage_pc_rdata[i]        <= pc_id;
-            rvfi_stage_pc_wdata[i]        <= pc_set ? branch_target_ex : pc_if;
+            rvfi_stage_pc_rdata[i]        <= pc_id[31:0];
+            rvfi_stage_pc_wdata[i]        <= pc_set ? pc_target_ex[31:0] : pc_if[31:0];
             rvfi_stage_mem_rmask[i]       <= rvfi_mem_mask_int;
             rvfi_stage_mem_wmask[i]       <= data_we_o ? rvfi_mem_mask_int : 4'b0000;
             rvfi_stage_rs1_rdata[i]       <= rvfi_rs1_data_d;
@@ -1314,7 +1334,7 @@ module cve2_core import cve2_pkg::*; #(
   // Memory adddress/write data available first cycle of ld/st instruction from register read
   always_comb begin
     if (instr_first_cycle_id) begin
-      rvfi_mem_addr_d  = alu_adder_result_ex;
+      rvfi_mem_addr_d  = lsu_addr_ex[31:0];
       rvfi_mem_wdata_d = lsu_wdata;
     end else begin
       rvfi_mem_addr_d  = rvfi_mem_addr_q;
@@ -1348,6 +1368,7 @@ module cve2_core import cve2_pkg::*; #(
       2'b00:   rvfi_mem_mask_int = 4'b1111;
       2'b01:   rvfi_mem_mask_int = 4'b0011;
       2'b10:   rvfi_mem_mask_int = 4'b0001;
+      2'b11:   rvfi_mem_mask_int = 4'b1111;
       default: rvfi_mem_mask_int = 4'b0000;
     endcase
   end

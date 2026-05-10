@@ -7,15 +7,12 @@
 /**
  * RISC-V register file
  *
- * Register file with 31 or 15x 32 bit wide registers. Register 0 is fixed to 0.
- *
- * The physical storage uses two mirrored memories to provide two asynchronous
- * read ports and one synchronous write port. This maps to FPGA LUTRAM rather
- * than a bank of flip-flops plus read muxes.
+ * Native RV64 register file with 31 or 15 architectural registers. Register 0
+ * is fixed to 0.
  */
 module cve2_register_file_ff #(
   parameter bit                   RV32E             = 0,
-  parameter int unsigned          DataWidth         = 32,
+  parameter int unsigned          DataWidth         = 64,
   parameter logic [DataWidth-1:0] WordZeroVal       = '0
 ) (
   // Clock and Reset
@@ -32,12 +29,10 @@ module cve2_register_file_ff #(
   input  logic [4:0]           raddr_b_i,
   output logic [DataWidth-1:0] rdata_b_o,
 
-
   // Write port W1
   input  logic [4:0]           waddr_a_i,
   input  logic [DataWidth-1:0] wdata_a_i,
   input  logic                 we_a_i
-
 );
 
   localparam int unsigned ADDR_WIDTH = RV32E ? 4 : 5;
@@ -75,24 +70,27 @@ module cve2_register_file_ff #(
 
   // Simulation-only aliases for older ModelSim wave scripts and debugging.
   // synthesis translate_off
-  logic [NUM_WORDS-1:0][DataWidth-1:0] rf_reg;
-  logic [NUM_WORDS-1:1][DataWidth-1:0] rf_reg_q;
+  logic [NUM_WORDS-1:0][31:0] rf_reg_lower;
+  logic [NUM_WORDS-1:0][31:0] rf_reg_upper;
+  logic [NUM_WORDS-1:1][31:0] rf_reg_q_lower;
+  logic [NUM_WORDS-1:1][31:0] rf_reg_q_upper;
 
-  assign rf_reg[0] = WordZeroVal;
+  assign rf_reg_lower[0] = 32'h0000_0000;
+  assign rf_reg_upper[0] = 32'h0000_0000;
 
   for (genvar i = 1; i < NUM_WORDS; i++) begin : g_rf_wave_aliases
-    assign rf_reg[i]   = rf_mem_a[ADDR_WIDTH'(i)];
-    assign rf_reg_q[i] = rf_reg[i];
+    assign rf_reg_lower[i]   = rf_mem_a[i][31:0];
+    assign rf_reg_upper[i]   = rf_mem_a[i][63:32];
+    assign rf_reg_q_lower[i] = rf_reg_lower[i];
+    assign rf_reg_q_upper[i] = rf_reg_upper[i];
   end
   // synthesis translate_on
 
   assign rdata_a_o = (raddr_a_i == 5'd0) ? WordZeroVal : rf_mem_a[raddr_a];
   assign rdata_b_o = (raddr_b_i == 5'd0) ? WordZeroVal : rf_mem_b[raddr_b];
 
-  // Signals not used in this register file.
+  // Signal not used in this register file.
   logic unused_test_en;
-  logic unused_rst_n;
   assign unused_test_en = test_en_i;
-  assign unused_rst_n   = rst_ni;
 
 endmodule
