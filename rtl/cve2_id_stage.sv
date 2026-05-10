@@ -57,8 +57,7 @@ module cve2_id_stage #(
   input  logic                      instr_fetch_err_i,
   input  logic                      instr_fetch_err_plus2_i,
 
-  input  logic [31:0]               pc_id_i,
-  input  logic [31:0]               pc_id_upper_i,
+  input  logic [63:0]               pc_id_i,
 
   // Stalls
   input  logic                      ex_valid_i,
@@ -122,8 +121,6 @@ module cve2_id_stage #(
 
   // Register Interface
   output  cve2_pkg::x_register_t    x_register_o,
-  output  logic                     r_a_upper_o,
-  output  logic                     r_b_upper_o,
 
   // Commit Interface
   output logic                      x_commit_valid_o,
@@ -170,7 +167,6 @@ module cve2_id_stage #(
   output logic [4:0]                rf_waddr_id_o,
   output logic [63:0]               rf_wdata_id_o,
   output logic                      rf_we_id_o,
-  output logic                      rf_w_upper_id_o,
   output logic [63:0]               lsu_addr_ex_o,
   output logic [63:0]               pc_target_ex_o,
 
@@ -257,62 +253,9 @@ module cve2_id_stage #(
   imm_a_sel_e  imm_a_mux_sel;
   imm_b_sel_e  imm_b_mux_sel, imm_b_mux_sel_dec;
 
-  // ==== 64-bit execution control ====
-  op_class_e   op_class;
-  logic        op_uses_64_path;
-  logic        is_op_or_op_imm;
+  // Native RV64 execution control.
   logic        is_word_op;
-  logic        needs_upper_cycle;
-  logic [63:0] imm_b_eff;
-  logic        use_upper_half_operand_a;
-  logic        use_upper_half_operand_b;
-  logic        cmp_is_compare;
-  logic        cmp_is_lower_cycle;
-  logic        cmp_write_upper_cycle;
-  logic        cmp_use_upper_first;
-  logic        cmp_need_lower_after_upper;
-  logic        shift_is_64;
-  logic        shift_is_left;
-  logic        shift_is_right;
-  logic        shift_is_arith;
-  logic [5:0]  shift_amt_now;
-  logic [5:0]  shift_amt_q;
-  logic [5:0]  shift_amt;
-  logic [5:0]  shift_amt_compl;
-  logic        shift_amt_zero;
-  logic        shift_amt_ge32;
-  logic        shift_amt_lt32_nonzero;
-  logic        shift_first_save;
-  logic        shift_capture;
-  logic        shift_imd_we;
-  logic        shift_use_upper_a;
-  logic [5:0]  shift_amt_to_alu;
-  logic [63:0] alu_operand_b_base;
-  logic [63:0] rf_wdata_shift;
-  logic        is_lui_op;
-  logic        is_auipc_op;
-  logic        is_jump_op;
-  logic        pcadd_active;
-  logic        pcadd_upper_cycle;
-  logic        pcadd_lower_cycle;
-  logic [31:0] pc_id_upper_eff;
-  logic [63:0] pc_id_operand;
-  logic        is_jalr_op;
-  logic        addr_upper_cycle;
-  logic        addr_needs_upper_cycle;
-  logic        addr_capture_lower;
-  logic        addr_use_upper_a;
-  logic [31:0] addr_lower_q;
-  logic        addr_carry_q;
-  logic [31:0] addr_src_upper;
-  logic [31:0] addr_imm_upper;
-  logic [31:0] addr_upper_comb;
-  logic [31:0] addr_lower_result;
-  logic [31:0] addr_upper_result;
   logic [63:0] addr_result_ex;
-  logic        signext_upper_cycle;
-  logic [31:0] signext_upper_fill_q;
-  logic [31:0] signext_upper_fill_now;
   logic        csr_is_imm_op;
 
   // Multiplier Control
@@ -327,8 +270,6 @@ module cve2_id_stage #(
   logic [1:0]  lsu_type;
   logic        lsu_sign_ext;
   logic        lsu_req, lsu_req_dec;
-  logic        lsu_store_upper_half;
-  logic [63:0] lsu_wdata_upper;
   logic        data_req_allowed;
 
   // CSR control
@@ -345,16 +286,9 @@ module cve2_id_stage #(
   // ID-EX FSM //
   ///////////////
 
-  typedef enum logic [3:0] {
+  typedef enum logic {
     FIRST_CYCLE,
-    MULTI_CYCLE,
-    CMP_LOWER_CYCLE,
-    CMP_UPPER_WRITE_CYCLE,
-    SHIFT_LOW_CYCLE,
-    SHIFT_UPPER_CYCLE,
-    PC_UPPER_CYCLE,
-    ADDR_UPPER_CYCLE,
-    SIGNEXT_UPPER_CYCLE
+    MULTI_CYCLE
   } id_fsm_e;
   id_fsm_e id_fsm_q, id_fsm_d;
 
@@ -463,17 +397,13 @@ module cve2_id_stage #(
 
   assign imm_a = (imm_a_mux_sel == IMM_A_Z) ? {59'h0, zimm_rs1_type[4:0]} : '0;
 
-  assign pc_id_upper_eff = pc_id_upper_i;
-
-  assign pc_id_operand = {pc_id_upper_eff, pc_id_i};
-
   always_comb begin : alu_operand_a_mux
     unique case (alu_op_a_mux_sel)
       OP_A_REG_A:  alu_operand_a = rf_rdata_a_fwd;
       OP_A_FWD:    alu_operand_a = lsu_addr_last_i;
-      OP_A_CURRPC: alu_operand_a = pc_id_operand;
+      OP_A_CURRPC: alu_operand_a = pc_id_i;
       OP_A_IMM:    alu_operand_a = imm_a;
-      default:     alu_operand_a = pc_id_operand;
+      default:     alu_operand_a = pc_id_i;
     endcase
   end
 
@@ -501,10 +431,7 @@ module cve2_id_stage #(
       IMM_B_INCR_PC,
       IMM_B_INCR_ADDR})
 
-  // For upper-half cycles, immediate's upper value is its sign-extension.
-  assign imm_b_eff = imm_b;
-  assign alu_operand_b_base = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b_eff : rf_rdata_b_fwd;
-  assign alu_operand_b      = alu_operand_b_base;
+  assign alu_operand_b = (alu_op_b_mux_sel == OP_B_IMM) ? imm_b : rf_rdata_b_fwd;
 
   /////////////////////////////////////////
   // Multicycle Operation Stage Register //
@@ -516,56 +443,13 @@ module cve2_id_stage #(
         imd_val_q[i] <= '0;
       end else if (imd_val_we_ex_i[i]) begin
         imd_val_q[i] <= imd_val_d_ex_i[i];
-      end else if ((i == 0) && shift_imd_we) begin
-        imd_val_q[i] <= {2'b00, result_ex_i[31:0]};
       end
     end
   end
 
   assign imd_val_q_ex_o = imd_val_q;
 
-  always_ff @(posedge clk_i or negedge rst_ni) begin : shift_state_reg
-    if (!rst_ni) begin
-      shift_amt_q     <= 6'h00;
-    end else if (shift_capture) begin
-      shift_amt_q     <= shift_amt_now;
-    end
-  end
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin : addr_state_reg
-    if (!rst_ni) begin
-      addr_lower_q <= 32'h0000_0000;
-      addr_carry_q <= 1'b0;
-    end else if (addr_capture_lower) begin
-      addr_lower_q <= result_ex_i[31:0];
-      addr_carry_q <= carry_out_i;
-    end
-  end
-
-  always_ff @(posedge clk_i or negedge rst_ni) begin : signext_upper_reg
-    if (!rst_ni) begin
-      signext_upper_fill_q <= 32'h0000_0000;
-    end else if (instr_executing_spec && (id_fsm_q == FIRST_CYCLE) &&
-                 (is_word_op || is_lui_op)) begin
-      signext_upper_fill_q <= signext_upper_fill_now;
-    end
-  end
-
-  // Carry register: captures lower-cycle carry for adder-class 2-cycle ops.
-  // Cleared otherwise so stale carries can't leak into a subsequent op.
-  always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
-    if (!rst_ni) begin
-      carry_in_o <= 1'b0;
-    end else if (((((op_class == OP_CLASS_ADDER) && (id_fsm_q == FIRST_CYCLE)) ||
-                   pcadd_lower_cycle) &&
-                  !is_word_op &&
-                  instr_executing_spec) ||
-                 addr_capture_lower) begin
-      carry_in_o <= carry_out_i;
-    end else begin
-      carry_in_o <= 1'b0;
-    end
-  end
+  assign carry_in_o = 1'b0;
 
   ///////////////////////
   // Register File MUX //
@@ -690,7 +574,7 @@ module cve2_id_stage #(
     .instr_is_compressed_i  (instr_is_compressed_i),
     .instr_fetch_err_i      (instr_fetch_err_i),
     .instr_fetch_err_plus2_i(instr_fetch_err_plus2_i),
-    .pc_id_i                ({pc_id_upper_i, pc_id_i}),
+    .pc_id_i                (pc_id_i),
     .instr_valid_clear_o(instr_valid_clear_o),
     .id_in_ready_o      (id_in_ready_o),
     .controller_run_o   (controller_run),
@@ -737,208 +621,11 @@ module cve2_id_stage #(
   assign mult_en_id      = instr_executing ? mult_en_dec                     : 1'b0;
   assign div_en_id       = instr_executing ? div_en_dec                      : 1'b0;
 
-  // =========================================================================
-  // Op classification: drives FSM and 64-bit operand sequencing.
-  // =========================================================================
-  // OP/OP_IMM and RV64 word ALU opcodes enter the RV64 ALU path. Branches enter only for their
-  // comparison cycle; their target-address ADD remains outside that path.
-  assign is_lui_op       = (instr_rdata_alu_i[6:0] == OPCODE_LUI);
-  assign is_auipc_op     = (instr_rdata_alu_i[6:0] == OPCODE_AUIPC);
-  assign is_jump_op      = (instr_rdata_alu_i[6:0] == OPCODE_JAL) ||
-                           (instr_rdata_alu_i[6:0] == OPCODE_JALR);
-  assign is_jalr_op      = (instr_rdata_alu_i[6:0] == OPCODE_JALR);
-  assign addr_upper_cycle = (id_fsm_q == ADDR_UPPER_CYCLE);
-  assign pcadd_active    = is_auipc_op ||
-                           (is_jump_op && ((id_fsm_q == MULTI_CYCLE) ||
-                                           (id_fsm_q == PC_UPPER_CYCLE)));
-  assign pcadd_upper_cycle = 1'b0;
-  assign pcadd_lower_cycle = pcadd_active;
-  assign addr_needs_upper_cycle = 1'b0;
-  assign addr_capture_lower = 1'b0;
-  assign addr_use_upper_a = 1'b0;
-
   assign is_word_op = (instr_rdata_alu_i[6:0] == OPCODE_OP_32) ||
                       (instr_rdata_alu_i[6:0] == OPCODE_OP_IMM_32);
 
-  assign is_op_or_op_imm = (instr_rdata_alu_i[6:0] == OPCODE_OP) ||
-                           (instr_rdata_alu_i[6:0] == OPCODE_OP_IMM) ||
-                           is_word_op;
-
-  always_comb begin
-    op_class = OP_CLASS_NONE;
-    if (pcadd_active) begin
-      op_class = OP_CLASS_PCADD;
-    end else if (is_op_or_op_imm || (instr_rdata_alu_i[6:0] == 7'b1100011)) begin // OPCODE_BRANCH
-      unique case (alu_operator)
-        ALU_ADD, ALU_SUB: begin
-          op_class = is_op_or_op_imm ? OP_CLASS_ADDER : OP_CLASS_NONE;
-        end
-        ALU_AND, ALU_OR, ALU_XOR: begin
-          op_class = is_op_or_op_imm ? OP_CLASS_BITWISE : OP_CLASS_NONE;
-        end
-        ALU_EQ,  ALU_NE,
-        ALU_LT,  ALU_LTU,
-        ALU_GE,  ALU_GEU,
-        ALU_SLT, ALU_SLTU: begin
-          op_class = OP_CLASS_COMPARE;
-        end
-        ALU_SLL, ALU_SRL, ALU_SRA: begin
-          op_class = is_op_or_op_imm ? OP_CLASS_SHIFT : OP_CLASS_NONE;
-        end
-        default: op_class = OP_CLASS_NONE;
-      endcase
-    end
-  end
-
-  assign op_uses_64_path = 1'b0;
-
-  // =========================================================================
-  // RV64 shift sequencing control
-  // =========================================================================
-  assign shift_is_64            = 1'b0;
-  assign shift_is_left          = shift_is_64 && (alu_operator == ALU_SLL);
-  assign shift_is_right         = shift_is_64 && ((alu_operator == ALU_SRL) ||
-                                                  (alu_operator == ALU_SRA));
-  assign shift_is_arith         = shift_is_64 && (alu_operator == ALU_SRA);
-  assign shift_amt_now          = (alu_op_b_mux_sel == OP_B_IMM) ?
-                                  instr_rdata_alu_i[25:20] : rf_rdata_b_i[5:0];
-  assign shift_amt              = (id_fsm_q == FIRST_CYCLE) ? shift_amt_now : shift_amt_q;
-  assign shift_amt_compl        = 6'd32 - shift_amt;
-  assign shift_amt_zero         = (shift_amt == 6'h00);
-  assign shift_amt_ge32         = shift_amt[5];
-  assign shift_amt_lt32_nonzero = !shift_amt_zero && !shift_amt_ge32;
-  assign shift_first_save       = shift_is_64 &&
-                                  (id_fsm_q == FIRST_CYCLE) &&
-                                  !shift_amt_zero &&
-                                  !(shift_is_right && shift_amt_ge32);
-  assign shift_capture          = instr_executing_spec &&
-                                  (id_fsm_q == FIRST_CYCLE) &&
-                                  shift_is_64;
-  assign shift_imd_we           = instr_executing_spec && shift_first_save;
-
-  always_comb begin
-    shift_use_upper_a = 1'b0;
-    if (shift_is_64) begin
-      unique case (id_fsm_q)
-        FIRST_CYCLE: begin
-          shift_use_upper_a = shift_is_right && shift_amt_ge32;
-        end
-        SHIFT_LOW_CYCLE: begin
-          shift_use_upper_a = shift_is_right && shift_amt_lt32_nonzero;
-        end
-        SHIFT_UPPER_CYCLE: begin
-          shift_use_upper_a = shift_amt_zero ||
-                              shift_amt_lt32_nonzero ||
-                              (shift_is_right && shift_amt_ge32);
-        end
-        default: shift_use_upper_a = 1'b0;
-      endcase
-    end
-  end
-
-  always_comb begin
-    shift_amt_to_alu = shift_amt;
-    if (shift_is_64) begin
-      unique case (id_fsm_q)
-        FIRST_CYCLE: begin
-          if (shift_is_left && shift_amt_lt32_nonzero) begin
-            shift_amt_to_alu = shift_amt_compl;
-          end else begin
-            shift_amt_to_alu = shift_amt;
-          end
-        end
-        SHIFT_LOW_CYCLE: begin
-          // The ALU internally complements shift amounts after the first cycle.
-          if (shift_is_right) begin
-            shift_amt_to_alu = shift_amt;
-          end else if (shift_amt_lt32_nonzero) begin
-            shift_amt_to_alu = shift_amt_compl;
-          end else begin
-            shift_amt_to_alu = shift_amt;
-          end
-        end
-        SHIFT_UPPER_CYCLE: begin
-          // The ALU internally complements shift amounts after the first cycle.
-          if (shift_amt_lt32_nonzero) begin
-            shift_amt_to_alu = shift_amt_compl;
-          end else begin
-            shift_amt_to_alu = shift_amt;
-          end
-        end
-        default: shift_amt_to_alu = shift_amt;
-      endcase
-    end
-  end
-
-  always_comb begin
-    rf_wdata_shift = result_ex_i;
-    if (shift_is_64) begin
-      unique case (id_fsm_q)
-        SHIFT_LOW_CYCLE: begin
-          if (shift_is_left && shift_amt_ge32) begin
-            rf_wdata_shift = 32'h0000_0000;
-          end else if (shift_is_right) begin
-            rf_wdata_shift = imd_val_q[0][31:0] | result_ex_i;
-          end else begin
-            rf_wdata_shift = result_ex_i;
-          end
-        end
-        SHIFT_UPPER_CYCLE: begin
-          if (shift_is_right && shift_amt_ge32) begin
-            rf_wdata_shift = (shift_is_arith && rf_rdata_a_fwd[31]) ?
-                             32'hffff_ffff : 32'h0000_0000;
-          end else if (shift_is_left && shift_amt_ge32) begin
-            rf_wdata_shift = imd_val_q[0][31:0];
-          end else if (shift_is_left) begin
-            rf_wdata_shift = imd_val_q[0][31:0] | result_ex_i;
-          end else begin
-            rf_wdata_shift = result_ex_i;
-          end
-        end
-        default: rf_wdata_shift = result_ex_i;
-      endcase
-    end
-  end
-
-  // =========================================================================
-  // Compare control
-  // =========================================================================
-  assign cmp_is_compare       = 1'b0;
-  assign cmp_use_upper_first  = 1'b0;
-  assign cmp_is_lower_cycle   = 1'b0;
-  assign cmp_write_upper_cycle = 1'b0;
-  assign cmp_need_lower_after_upper = 1'b0;
-
-  assign use_upper_half_operand_a = 1'b0;
-  assign use_upper_half_operand_b = 1'b0;
-  // =========================================================================
-  // needs_upper_cycle: 1 = explicit upper-half execution required.
-  // =========================================================================
-  always_comb begin
-    needs_upper_cycle = 1'b0;
-  end
-
-  always_comb begin
-    alu_operator_eff = alu_operator;
-  end
-
-  always_comb begin
-    unique case (alu_op_a_mux_sel)
-      OP_A_REG_A:  addr_src_upper = rf_rdata_a_i[63:32];
-      OP_A_FWD:    addr_src_upper = lsu_addr_last_i[63:32];
-      OP_A_CURRPC: addr_src_upper = pc_id_upper_eff;
-      default:     addr_src_upper = 32'h0000_0000;
-    endcase
-  end
-
-  assign addr_imm_upper    = imm_b[63:32];
-  assign addr_upper_comb   = result_ex_i[63:32];
-  assign addr_lower_result = result_ex_i[31:0];
-  assign addr_upper_result = result_ex_i[63:32];
-  assign addr_result_ex    = {addr_upper_result, addr_lower_result};
-
-  assign signext_upper_cycle    = (id_fsm_q == SIGNEXT_UPPER_CYCLE);
-  assign signext_upper_fill_now = {32{result_ex_i[31]}};
+  assign alu_operator_eff = alu_operator;
+  assign addr_result_ex   = result_ex_i;
 
   // Native 64-bit CSR access: csr_wdata_o is the full source operand each cycle.
   // CSRRWI/CSRRSI/CSRRCI use a 5-bit zero-extended immediate; everything else
@@ -949,7 +636,6 @@ module cve2_id_stage #(
   assign lsu_we_o                = lsu_we;
   assign lsu_type_o              = lsu_type;
   assign lsu_sign_ext_o          = lsu_sign_ext;
-  assign lsu_store_upper_half    = 1'b0;
   assign lsu_wdata_o             = rf_rdata_b_i;
   assign csr_op_en_o             = EnableCSRs & csr_access_o & instr_executing & instr_id_done_o;
   assign csr_wdata_o             = csr_is_imm_op ? imm_a : rf_rdata_a_i;
@@ -1010,21 +696,13 @@ module cve2_id_stage #(
     branch_set_raw_d        = 1'b0;
     jump_set_raw            = 1'b0;
     perf_branch_o           = 1'b0;
-    r_a_upper_o             = 1'b0;
-    r_b_upper_o             = 1'b0;
-    rf_w_upper_id_o         = 1'b0;
 
     if (instr_executing_spec) begin
       unique case (id_fsm_q)
         FIRST_CYCLE: begin
           priority case (1'b1)
             lsu_req_dec: begin
-              if (addr_needs_upper_cycle) begin
-                id_fsm_d  = ADDR_UPPER_CYCLE;
-                stall_alu = 1'b1;
-              end else begin
-                id_fsm_d  = MULTI_CYCLE;
-              end
+              id_fsm_d = MULTI_CYCLE;
             end
             multdiv_en_dec: begin
               if (~ex_valid_i) begin
@@ -1034,62 +712,15 @@ module cve2_id_stage #(
               end
             end
             branch_in_dec: begin
-              if (cmp_need_lower_after_upper) begin
-                id_fsm_d     = CMP_LOWER_CYCLE;
-                stall_branch = 1'b1;
-              end else begin
-                id_fsm_d         = branch_decision_i ? MULTI_CYCLE : FIRST_CYCLE;
-                stall_branch     = branch_decision_i;
-                branch_set_raw_d = branch_decision_i;
-                perf_branch_o    = 1'b1;
-              end
+              id_fsm_d         = branch_decision_i ? MULTI_CYCLE : FIRST_CYCLE;
+              stall_branch     = branch_decision_i;
+              branch_set_raw_d = branch_decision_i;
+              perf_branch_o    = 1'b1;
             end
             jump_in_dec: begin
-              if (addr_needs_upper_cycle) begin
-                id_fsm_d     = ADDR_UPPER_CYCLE;
-                stall_jump   = 1'b1;
-                jump_set_raw = 1'b0;
-              end else begin
-                id_fsm_d     = MULTI_CYCLE;
-                stall_jump   = 1'b1;
-                jump_set_raw = jump_set_dec;
-              end
-            end
-            ((is_lui_op || is_word_op) && rf_we_dec && (rf_waddr_id_o != 5'd0)): begin
-              id_fsm_d  = SIGNEXT_UPPER_CYCLE;
-              stall_alu = 1'b1;
-            end
-            (op_uses_64_path && !branch_in_dec): begin
-              if (shift_is_64) begin
-                if (shift_first_save) begin
-                  id_fsm_d  = SHIFT_LOW_CYCLE;
-                  stall_alu = 1'b1;
-                  rf_we_raw = 1'b0;
-                end else if (shift_amt_zero || (shift_is_right && shift_amt_ge32)) begin
-                  id_fsm_d  = SHIFT_UPPER_CYCLE;
-                  stall_alu = 1'b1;
-                end
-              end else if (op_class == OP_CLASS_COMPARE) begin
-                if (cmp_need_lower_after_upper) begin
-                  id_fsm_d  = CMP_LOWER_CYCLE;
-                  stall_alu = 1'b1;
-                  rf_we_raw = 1'b0;
-                end else begin
-                  id_fsm_d  = CMP_UPPER_WRITE_CYCLE;
-                  stall_alu = 1'b1;
-                end
-              end else if (op_class == OP_CLASS_PCADD) begin
-                if (needs_upper_cycle) begin
-                  id_fsm_d  = PC_UPPER_CYCLE;
-                  stall_alu = 1'b1;
-                end
-              end else begin
-                if (needs_upper_cycle) begin
-                  id_fsm_d  = MULTI_CYCLE;
-                  stall_alu = 1'b1;
-                end
-              end
-              // else: 1-cycle, stays in FIRST_CYCLE
+              id_fsm_d     = MULTI_CYCLE;
+              stall_jump   = 1'b1;
+              jump_set_raw = jump_set_dec;
             end
             alu_multicycle_dec: begin
               stall_alu     = 1'b1;
@@ -1123,106 +754,24 @@ module cve2_id_stage #(
         end
 
         MULTI_CYCLE: begin
-            if (op_uses_64_path && (op_class != OP_CLASS_COMPARE)) begin
-              if (op_class == OP_CLASS_PCADD) begin
-                if (needs_upper_cycle) begin
-                  id_fsm_d   = PC_UPPER_CYCLE;
-                  stall_jump = jump_in_dec;
-                  stall_alu  = !jump_in_dec;
-                end else begin
-                  id_fsm_d = FIRST_CYCLE;
-                end
-              end else begin
-                id_fsm_d        = FIRST_CYCLE;
-                r_a_upper_o     = 1'b1;
-                r_b_upper_o     = (alu_op_b_mux_sel != OP_B_IMM); // I-type: B is imm, no RF read
-                rf_w_upper_id_o = 1'b1;
-              end
-            end else begin
-              if (multdiv_en_dec) begin
-              rf_we_raw = rf_we_dec & ex_valid_i;
-            end
-
-            if (multicycle_done) begin
-              id_fsm_d = FIRST_CYCLE;
-            end else begin
-              stall_multdiv = multdiv_en_dec;
-              stall_branch  = branch_in_dec;
-              stall_jump    = jump_in_dec;
-              stall_coproc  = XInterface & illegal_insn_dec;
-            end
+          if (multdiv_en_dec) begin
+            rf_we_raw = rf_we_dec & ex_valid_i;
           end
-        end
 
-        CMP_LOWER_CYCLE: begin
-          if (branch_in_dec) begin
-            if (branch_decision_i) begin
-              id_fsm_d         = MULTI_CYCLE;
-              stall_branch     = 1'b1;
-              branch_set_raw_d = 1'b1;
-            end else begin
-              id_fsm_d = FIRST_CYCLE;
-            end
-            perf_branch_o = 1'b1;
-          end else begin
-            id_fsm_d  = CMP_UPPER_WRITE_CYCLE;
-            stall_alu = 1'b1;
-          end
-        end
-
-        CMP_UPPER_WRITE_CYCLE: begin
-          id_fsm_d        = FIRST_CYCLE;
-          rf_w_upper_id_o = 1'b1;
-        end
-
-        SHIFT_LOW_CYCLE: begin
-          id_fsm_d  = SHIFT_UPPER_CYCLE;
-          stall_alu = 1'b1;
-        end
-
-        SHIFT_UPPER_CYCLE: begin
-          id_fsm_d        = FIRST_CYCLE;
-          rf_w_upper_id_o = 1'b1;
-        end
-
-        PC_UPPER_CYCLE: begin
-          id_fsm_d        = FIRST_CYCLE;
-          rf_w_upper_id_o = 1'b1;
-        end
-
-        ADDR_UPPER_CYCLE: begin
-          if (lsu_req_dec) begin
-            id_fsm_d = MULTI_CYCLE;
-          end else if (jump_in_dec) begin
-            id_fsm_d     = MULTI_CYCLE;
-            stall_jump   = 1'b1;
-            jump_set_raw = jump_set_dec;
-          end else begin
+          if (multicycle_done) begin
             id_fsm_d = FIRST_CYCLE;
+          end else begin
+            stall_multdiv = multdiv_en_dec;
+            stall_branch  = branch_in_dec;
+            stall_jump    = jump_in_dec;
+            stall_coproc  = XInterface & illegal_insn_dec;
           end
-        end
-
-        SIGNEXT_UPPER_CYCLE: begin
-          id_fsm_d        = FIRST_CYCLE;
-          rf_w_upper_id_o = 1'b1;
         end
 
         default: begin
           id_fsm_d          = FIRST_CYCLE;
         end
       endcase
-    end
-
-    if (use_upper_half_operand_a) begin
-      r_a_upper_o = 1'b1;
-    end
-
-    if (use_upper_half_operand_b && (alu_op_b_mux_sel != OP_B_IMM)) begin
-      r_b_upper_o = 1'b1;
-    end
-
-    if (lsu_store_upper_half) begin
-      r_b_upper_o = 1'b1;
     end
   end
 
@@ -1236,10 +785,7 @@ module cve2_id_stage #(
 
   assign instr_done = ~stall_id & ~flush_id & instr_executing;
 
-  assign instr_first_cycle      = instr_valid_i &
-                                  ((id_fsm_q == FIRST_CYCLE) ||
-                                   (id_fsm_q == CMP_LOWER_CYCLE) ||
-                                   (id_fsm_q == ADDR_UPPER_CYCLE));
+  assign instr_first_cycle      = instr_valid_i & (id_fsm_q == FIRST_CYCLE);
   assign instr_first_cycle_id_o = instr_first_cycle;
 
   assign data_req_allowed = instr_first_cycle;
@@ -1260,9 +806,8 @@ module cve2_id_stage #(
     rf_rdata_b_fwd = rf_rdata_b_i;
   end
 
-  assign lsu_wdata_upper = rf_rdata_b_i;
-
-  logic unused_data_req_done_ex;
+  logic unused_native_inputs;
+  assign unused_native_inputs = carry_out_i ^ alu_is_equal_result_i;
 
   assign perf_dside_wait_o = instr_executing & lsu_req_dec & ~lsu_resp_valid_i;
 
@@ -1319,8 +864,7 @@ module cve2_id_stage #(
       instr_valid_i && !(illegal_c_insn_i || instr_fetch_err_i))
 
   `ASSERT(IbexMulticycleEnableUnique,
-      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec,
-                (op_uses_64_path && !branch_in_dec && needs_upper_cycle)}))
+      $onehot0({lsu_req_dec, multdiv_en_dec, branch_in_dec, jump_in_dec, illegal_insn_dec}))
 
   `ASSERT(CVE2DuplicateInstrMatch, instr_valid_i |-> instr_rdata_i === instr_rdata_alu_i)
 

@@ -46,7 +46,6 @@ module cve2_alu #(
   logic        adder_sub;
   logic [64:0] adder_ext;
   logic [63:0] adder_b;
-  logic        cmp_signed;
   logic        cmp_lt_signed;
   logic        cmp_lt_unsigned;
   logic        cmp_result;
@@ -74,19 +73,11 @@ module cve2_alu #(
   assign carry_out_o        = adder_ext[64];
   assign adder_result_ext_o = {1'b0, adder_ext[32:0]};
 
-  assign is_equal_result_o = (operand_a_i == operand_b_i);
+  assign is_equal_result_o = (adder_result_o == 64'h0);
 
-  always_comb begin
-    unique case (operator_i)
-      ALU_LT,
-      ALU_GE,
-      ALU_SLT: cmp_signed = 1'b1;
-      default: cmp_signed = 1'b0;
-    endcase
-  end
-
-  assign cmp_lt_signed   = ($signed(operand_a_i) < $signed(operand_b_i));
-  assign cmp_lt_unsigned = (operand_a_i < operand_b_i);
+  assign cmp_lt_signed   = (operand_a_i[63] != operand_b_i[63]) ?
+                           operand_a_i[63] : adder_result_o[63];
+  assign cmp_lt_unsigned = ~adder_ext[64];
 
   always_comb begin
     unique case (operator_i)
@@ -115,12 +106,7 @@ module cve2_alu #(
     endcase
   end
 
-  always_comb begin
-    unique case (operator_i)
-      ALU_SUB:  word_addsub_result = operand_a_i[31:0] - operand_b_i[31:0];
-      default:  word_addsub_result = operand_a_i[31:0] + operand_b_i[31:0];
-    endcase
-  end
+  assign word_addsub_result = adder_result_o[31:0];
 
   always_comb begin
     unique case (operator_i)

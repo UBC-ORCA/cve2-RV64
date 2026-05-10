@@ -8,9 +8,7 @@
  * RISC-V register file
  *
  * Native RV64 register file with 31 or 15 architectural registers. Register 0
- * is fixed to 0. The legacy upper-half control ports are kept as unused stubs
- * so the surrounding branch can be converted incrementally from the narrow
- * implementation.
+ * is fixed to 0.
  */
 module cve2_register_file_ff #(
   parameter bit                   RV32E             = 0,
@@ -26,19 +24,15 @@ module cve2_register_file_ff #(
   //Read port R1
   input  logic [4:0]           raddr_a_i,
   output logic [DataWidth-1:0] rdata_a_o,
-  input  logic                 r_a_upper_i,
 
   //Read port R2
   input  logic [4:0]           raddr_b_i,
   output logic [DataWidth-1:0] rdata_b_o,
-  input  logic                 r_b_upper_i,
 
   // Write port W1
   input  logic [4:0]           waddr_a_i,
   input  logic [DataWidth-1:0] wdata_a_i,
-  input  logic                 we_a_i,
-
-  input  logic                 w_upper_i
+  input  logic                 we_a_i
 );
 
   localparam int unsigned ADDR_WIDTH = RV32E ? 4 : 5;
@@ -95,8 +89,8 @@ module cve2_register_file_ff #(
   assign rdata_a_o = (raddr_a_i == 5'd0) ? WordZeroVal : rf_mem_a[raddr_a];
   assign rdata_b_o = (raddr_b_i == 5'd0) ? WordZeroVal : rf_mem_b[raddr_b];
 
-  // Legacy ports not used by the native register file.
-  logic unused_signals;
-  assign unused_signals = test_en_i | r_a_upper_i | r_b_upper_i | w_upper_i;
+  // Signal not used in this register file.
+  logic unused_test_en;
+  assign unused_test_en = test_en_i;
 
 endmodule

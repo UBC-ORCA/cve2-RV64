@@ -28,8 +28,7 @@ module testbench;
   logic [15:0] instr_rdata_c_i;
   logic        instr_is_compressed_i;
 
-  logic [31:0] pc_id_i;
-  logic [31:0] pc_id_upper_i;
+  logic [63:0] pc_id_i;
 
   logic        branch_decision;
   logic        alu_is_equal_result;
@@ -115,15 +114,12 @@ module testbench;
   logic [4:0]  rf_waddr_id;
   logic [63:0] rf_wdata_id;
   logic        rf_we_id;
-  logic        rf_w_upper_id;
 
   logic [4:0]  rf_waddr_wb;
   logic [63:0] rf_wdata_wb;
   logic        rf_we_wb;
-  logic        rf_w_upper_wb;
   logic [63:0] rf_wdata_lsu;
   logic        rf_we_lsu;
-  logic        rf_wdata_lsu_upper;
   logic        en_wb;
 
   logic        preload_we;
@@ -184,7 +180,6 @@ module testbench;
     .instr_fetch_err_i(1'b0),
     .instr_fetch_err_plus2_i(1'b0),
     .pc_id_i,
-    .pc_id_upper_i,
     .ex_valid_i(ex_valid),
     .lsu_resp_valid_i(lsu_resp_valid),
     .alu_operator_ex_o(alu_operator_ex),
@@ -230,8 +225,6 @@ module testbench;
     .x_issue_req_o(),
     .x_issue_resp_i('0),
     .x_register_o(),
-    .r_a_upper_o(),
-    .r_b_upper_o(),
     .x_commit_valid_o(),
     .x_commit_o(),
     .x_result_valid_i(1'b0),
@@ -263,7 +256,6 @@ module testbench;
     .rf_waddr_id_o(rf_waddr_id),
     .rf_wdata_id_o(rf_wdata_id),
     .rf_we_id_o(rf_we_id),
-    .rf_w_upper_id_o(rf_w_upper_id),
     .lsu_addr_ex_o(lsu_addr_ex),
     .pc_target_ex_o(pc_target_ex),
     .en_wb_o(en_wb),
@@ -327,7 +319,6 @@ module testbench;
     .lsu_wdata_i(lsu_wdata_o),
     .lsu_sign_ext_i(lsu_sign_ext_o),
     .lsu_rdata_o(rf_wdata_lsu),
-    .lsu_rdata_upper_o(rf_wdata_lsu_upper),
     .lsu_rdata_valid_o(rf_we_lsu),
     .lsu_req_i(lsu_req_o),
     .adder_result_ex_i(lsu_addr_ex),
@@ -354,14 +345,11 @@ module testbench;
     .rf_we_id_i(rf_we_id),
     .rf_wdata_lsu_i(rf_wdata_lsu),
     .rf_we_lsu_i(rf_we_lsu),
-    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper),
     .rf_waddr_wb_o(rf_waddr_wb),
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o(rf_we_wb),
     .lsu_resp_valid_i(lsu_resp_valid),
-    .lsu_resp_err_i(lsu_load_err | lsu_store_err),
-    .w_upper_i(rf_w_upper_id),
-    .w_upper_o(rf_w_upper_wb)
+    .lsu_resp_err_i(lsu_load_err | lsu_store_err)
   );
 
   cve2_register_file_ff #(
@@ -374,14 +362,11 @@ module testbench;
     .test_en_i(1'b0),
     .raddr_a_i(rf_raddr_a),
     .rdata_a_o(rf_rdata_a),
-    .r_a_upper_i(1'b0),
     .raddr_b_i(rf_raddr_b),
     .rdata_b_o(rf_rdata_b),
-    .r_b_upper_i(1'b0),
     .waddr_a_i(rf_waddr_mux),
     .wdata_a_i(rf_wdata_mux),
-    .we_a_i(rf_we_mux),
-    .w_upper_i(1'b0)
+    .we_a_i(rf_we_mux)
   );
 
   function automatic logic [31:0] enc_r(input logic [6:0] funct7,
@@ -428,8 +413,7 @@ module testbench;
 
   task automatic set_pc64(input logic [63:0] pc);
     begin
-      pc_id_i       = pc[31:0];
-      pc_id_upper_i = pc[63:32];
+      pc_id_i = pc;
     end
   endtask
 

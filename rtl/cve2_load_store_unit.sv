@@ -40,7 +40,6 @@ module cve2_load_store_unit
   input  logic         lsu_sign_ext_i,       // sign extension                   -> from ID/EX
 
   output logic [63:0]  lsu_rdata_o,          // requested data                   -> to ID/EX
-  output logic         lsu_rdata_upper_o,
   output logic         lsu_rdata_valid_o,
   input  logic         lsu_req_i,            // data request                     -> from ID/EX
 
@@ -501,11 +500,6 @@ module cve2_load_store_unit
 
   assign lsu_rdata_valid_o = ((ls_fsm_cs == IDLE) & data_rvalid_i &
                               ~data_or_pmp_err & ~data_we_q);
-
-  // Legacy dword-split write back signal: with the native 64-bit bus every
-  // load completes in one transaction, so the upper-half write-back is
-  // never used. Tied to 0 for downstream compatibility.
-  assign lsu_rdata_upper_o = 1'b0;
 
   // output to register file
   assign lsu_rdata_o = data_rdata_full;

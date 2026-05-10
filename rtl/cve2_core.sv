@@ -179,20 +179,15 @@ module cve2_core import cve2_pkg::*; #(
   // Register File
   logic [4:0]  rf_raddr_a;
   logic [63:0] rf_rdata_a;
-  logic        rf_r_upper_a;
   logic [4:0]  rf_raddr_b;
   logic [63:0] rf_rdata_b;
-  logic        rf_r_upper_b;
   logic        rf_ren_a;
   logic        rf_ren_b;
   logic [4:0]  rf_waddr_wb;
   logic [63:0] rf_wdata_wb;
-  logic        rf_w_upper_wb;
-  logic        rf_w_upper_id;
   // Writeback register write data that can be used on the forwarding path (doesn't factor in memory
   // read data as this is too late for the forwarding path)
   logic [63:0] rf_wdata_lsu;
-  logic        rf_wdata_lsu_upper;
   logic        rf_we_wb;
   logic        rf_we_lsu;
 
@@ -432,8 +427,7 @@ module cve2_core import cve2_pkg::*; #(
     .instr_fetch_err_plus2_i(instr_fetch_err_plus2),
     .illegal_c_insn_i       (illegal_c_insn_id),
 
-    .pc_id_i      (pc_id[31:0]),
-    .pc_id_upper_i(pc_id[63:32]),
+    .pc_id_i      (pc_id),
 
     // Stalls
     .ex_valid_i      (ex_valid),
@@ -497,9 +491,6 @@ module cve2_core import cve2_pkg::*; #(
 
     // Register Interface
     .x_register_o(x_register_o),
-    .r_a_upper_o(rf_r_upper_a),
-    .r_b_upper_o(rf_r_upper_b),
-    .rf_w_upper_id_o(rf_w_upper_id),
     .lsu_addr_ex_o(lsu_addr_ex),
     .pc_target_ex_o(pc_target_ex),
 
@@ -634,7 +625,6 @@ module cve2_core import cve2_pkg::*; #(
 
     .lsu_rdata_o      (rf_wdata_lsu),
     .lsu_rdata_valid_o(rf_we_lsu),
-    .lsu_rdata_upper_o(rf_wdata_lsu_upper),
     .lsu_req_i        (lsu_req),
 
     .adder_result_ex_i(lsu_addr_ex),
@@ -673,17 +663,13 @@ module cve2_core import cve2_pkg::*; #(
 
     .rf_wdata_lsu_i(rf_wdata_lsu),
     .rf_we_lsu_i   (rf_we_lsu),
-    .rf_wdata_lsu_upper_i(rf_wdata_lsu_upper),
 
     .rf_waddr_wb_o(rf_waddr_wb),
     .rf_wdata_wb_o(rf_wdata_wb),
     .rf_we_wb_o   (rf_we_wb),
 
     .lsu_resp_valid_i(lsu_resp_valid),
-    .lsu_resp_err_i  (lsu_resp_err),
-
-    .w_upper_i(rf_w_upper_id),
-    .w_upper_o(rf_w_upper_wb)
+    .lsu_resp_err_i  (lsu_resp_err)
   );
 
   ///////////////////////
@@ -741,14 +727,11 @@ module cve2_core import cve2_pkg::*; #(
 
     .raddr_a_i(rf_raddr_a),
     .rdata_a_o(rf_rdata_a),
-    .r_a_upper_i(rf_r_upper_a),
     .raddr_b_i(rf_raddr_b),
     .rdata_b_o(rf_rdata_b),
-    .r_b_upper_i(rf_r_upper_b),
     .waddr_a_i(rf_waddr_wb),
     .wdata_a_i(rf_wdata_wb),
-    .we_a_i   (rf_we_wb),
-    .w_upper_i(rf_w_upper_wb)
+    .we_a_i   (rf_we_wb)
   );
 
 
