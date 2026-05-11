@@ -12,9 +12,7 @@
 `include "dv_fcov_macros.svh"
 
 module cve2_controller #(
-  // When the CSR file is removed for area-only builds, mtval is unobservable.
-  // Keep exception control intact but let synthesis drop the 64-bit mtval muxes.
-  parameter bit EnableCSRs = 1'b0
+    parameter bit EnableCSRs = 1'b0
 ) (
   input  logic                  clk_i,
   input  logic                  rst_ni,
@@ -607,16 +605,12 @@ module cve2_controller #(
           unique case (1'b1)
             instr_fetch_err_prio: begin
               exc_cause_o = EXC_CAUSE_INSTR_ACCESS_FAULT;
-              if (EnableCSRs) begin
-                csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 64'd2) : pc_id_i;
-              end
+              csr_mtval_o = instr_fetch_err_plus2_i ? (pc_id_i + 64'd2) : pc_id_i;
             end
             illegal_insn_prio: begin
               exc_cause_o = EXC_CAUSE_ILLEGAL_INSN;
-              if (EnableCSRs) begin
-                csr_mtval_o = instr_is_compressed_i ? {48'b0, instr_compressed_i} :
+              csr_mtval_o = instr_is_compressed_i ? {48'b0, instr_compressed_i} :
                                                      {32'b0, instr_i};
-              end
             end
             ecall_insn_prio: begin
               exc_cause_o = (priv_mode_i == PRIV_LVL_M) ? EXC_CAUSE_ECALL_MMODE :
@@ -657,15 +651,11 @@ module cve2_controller #(
             end
             store_err_prio: begin
               exc_cause_o = EXC_CAUSE_STORE_ACCESS_FAULT;
-              if (EnableCSRs) begin
-                csr_mtval_o = lsu_addr_last_i;
-              end
+              csr_mtval_o = lsu_addr_last_i;
             end
             load_err_prio: begin
               exc_cause_o = EXC_CAUSE_LOAD_ACCESS_FAULT;
-              if (EnableCSRs) begin
-                csr_mtval_o = lsu_addr_last_i;
-              end
+              csr_mtval_o = lsu_addr_last_i;
             end
             default: ;
           endcase
