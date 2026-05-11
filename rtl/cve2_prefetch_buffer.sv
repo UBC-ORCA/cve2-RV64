@@ -49,20 +49,12 @@ module cve2_prefetch_buffer #(
   logic [NUM_REQS-1:0] branch_discard_n, branch_discard_s, branch_discard_q;
   logic [NUM_REQS-1:0] rdata_outstanding_rev;
 
-  logic [31:0]         stored_addr_lower_d, stored_addr_lower_q;
-  logic [63:32]        stored_addr_upper_d, stored_addr_upper_q;
+  logic [63:0]         stored_addr_d, stored_addr_q;
   logic                stored_addr_en;
-  logic [29:0]         fetch_addr_lower_d, fetch_addr_lower_q;
-  logic [63:32]        fetch_addr_upper_d, fetch_addr_upper_q;
-  logic [29:0]         fetch_addr_lower_base;
-  logic [63:32]        fetch_addr_upper_base;
-  logic [29:0]         fetch_addr_lower_next;
-  logic [63:32]        fetch_addr_upper_next;
-  logic                fetch_addr_lower_carry;
+  logic [63:0]         fetch_addr_d, fetch_addr_q;
+  logic [63:0]         fetch_addr_base;
   logic                fetch_addr_incr;
   logic                fetch_addr_en;
-  logic [31:0]         instr_addr_lower;
-  logic [63:32]        instr_addr_upper;
   logic [63:0]         instr_addr, instr_addr_w_aligned;
 
   logic                fifo_valid;
@@ -156,17 +148,14 @@ module cve2_prefetch_buffer #(
   assign stored_addr_en = valid_new_req & ~valid_req_q & ~instr_gnt_i;
 
   // Store whatever address was issued on the bus
-  assign stored_addr_lower_d = instr_addr_lower;
-  assign stored_addr_upper_d = instr_addr_upper;
+  assign stored_addr_d = instr_addr_w_aligned;
 
   // CPU resets with a branch, so no need to reset these addresses
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      stored_addr_lower_q <= '0;
-      stored_addr_upper_q <= '0;
+      stored_addr_q <= '0;
     end else if (stored_addr_en) begin
-      stored_addr_lower_q <= stored_addr_lower_d;
-      stored_addr_upper_q <= stored_addr_upper_d;
+      stored_addr_q <= stored_addr_d;
     end
   end
   // 2. fetch_addr_q
@@ -174,39 +163,24 @@ module cve2_prefetch_buffer #(
   // Update on a branch or as soon as a request is issued
   assign fetch_addr_en = branch_i | (valid_new_req & ~valid_req_q);
 
-  assign fetch_addr_incr       = valid_new_req & ~valid_req_q;
-  assign fetch_addr_lower_base = branch_i ? addr_i[31:2]  : fetch_addr_lower_q;
-  assign fetch_addr_upper_base = branch_i ? addr_i[63:32] : fetch_addr_upper_q;
-
-  assign {fetch_addr_lower_carry, fetch_addr_lower_next} =
-      {1'b0, fetch_addr_lower_base} + {30'd0, fetch_addr_incr};
-
-  assign fetch_addr_upper_next = fetch_addr_lower_carry ? (fetch_addr_upper_base + 32'd1) :
-                                                          fetch_addr_upper_base;
-
-  assign fetch_addr_lower_d = fetch_addr_lower_next;
-  assign fetch_addr_upper_d = fetch_addr_upper_next;
+  assign fetch_addr_incr = valid_new_req & ~valid_req_q;
+  assign fetch_addr_base = branch_i ? {addr_i[63:2], 2'b00} : fetch_addr_q;
+  // Keep the native RV64 fetch PC flat so synthesis can map this directly to
+  // the FPGA carry chain.
+  assign fetch_addr_d    = fetch_addr_base + (fetch_addr_incr ? 64'd4 : 64'd0);
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      fetch_addr_lower_q <= '0;
-      fetch_addr_upper_q <= '0;
+      fetch_addr_q <= '0;
     end else if (fetch_addr_en) begin
-      fetch_addr_lower_q <= fetch_addr_lower_d;
-      fetch_addr_upper_q <= fetch_addr_upper_d;
+      fetch_addr_q <= fetch_addr_d;
     end
   end
 
   // Address mux
-  assign instr_addr_lower = valid_req_q ? stored_addr_lower_q :
-                            branch_i    ? addr_i[31:0] :
-                                          {fetch_addr_lower_q, 2'b00};
-
-  assign instr_addr_upper = valid_req_q ? stored_addr_upper_q :
-                            branch_i    ? addr_i[63:32] :
-                                          fetch_addr_upper_q;
-
-  assign instr_addr = {instr_addr_upper, instr_addr_lower};
+  assign instr_addr = valid_req_q ? stored_addr_q :
+                      branch_i    ? addr_i :
+                                    fetch_addr_q;
 
   assign instr_addr_w_aligned = {instr_addr[63:2], 2'b00};
 
