@@ -555,6 +555,7 @@ module cve2_id_stage #(
   ////////////////
 
   cve2_controller #(
+    .EnableCSRs(EnableCSRs)
   ) controller_i (
     .clk_i (clk_i),
     .rst_ni(rst_ni),

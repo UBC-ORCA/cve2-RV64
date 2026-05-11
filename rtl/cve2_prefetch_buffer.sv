@@ -52,8 +52,6 @@ module cve2_prefetch_buffer #(
   logic [63:0]         stored_addr_d, stored_addr_q;
   logic                stored_addr_en;
   logic [63:0]         fetch_addr_d, fetch_addr_q;
-  logic [63:0]         fetch_addr_base;
-  logic                fetch_addr_incr;
   logic                fetch_addr_en;
   logic [63:0]         instr_addr, instr_addr_w_aligned;
 

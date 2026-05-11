@@ -51,7 +51,7 @@ module cve2_alu #(
   logic        cmp_result;
   logic [5:0]  shift_amt;
   logic [31:0] word_addsub_result;
-  logic [31:0] word_shift_result;
+  logic [63:0] shift_operand;
   logic [63:0] shift_result;
   logic [63:0] word_result_sext;
 
@@ -97,27 +97,29 @@ module cve2_alu #(
 
   assign shift_amt = word_op_i ? {1'b0, operand_b_i[4:0]} : operand_b_i[5:0];
 
+  // RV64 W-shifts operate on rs1[31:0] and sign-extend the 32-bit result.
+  // Feed those operations through the same 64-bit shifter used by full-width
+  // shifts instead of building a second 32-bit shifter in parallel.
+  always_comb begin
+    shift_operand = operand_a_i;
+    if (word_op_i) begin
+      shift_operand = (operator_i == ALU_SRA) ?
+          {{32{operand_a_i[31]}}, operand_a_i[31:0]} :
+          {32'h0000_0000, operand_a_i[31:0]};
+    end
+  end
+
   always_comb begin
     unique case (operator_i)
-      ALU_SLL:  shift_result = operand_a_i << shift_amt;
-      ALU_SRL:  shift_result = operand_a_i >> shift_amt;
-      ALU_SRA:  shift_result = $unsigned($signed(operand_a_i) >>> shift_amt);
-      default:  shift_result = operand_a_i;
+      ALU_SLL:  shift_result = shift_operand << shift_amt;
+      ALU_SRL:  shift_result = shift_operand >> shift_amt;
+      ALU_SRA:  shift_result = $unsigned($signed(shift_operand) >>> shift_amt);
+      default:  shift_result = shift_operand;
     endcase
   end
 
   assign word_addsub_result = adder_result_o[31:0];
-
-  always_comb begin
-    unique case (operator_i)
-      ALU_SLL:  word_shift_result = operand_a_i[31:0] << shift_amt[4:0];
-      ALU_SRL:  word_shift_result = operand_a_i[31:0] >> shift_amt[4:0];
-      ALU_SRA:  word_shift_result = $unsigned($signed(operand_a_i[31:0]) >>> shift_amt[4:0]);
-      default:  word_shift_result = word_addsub_result;
-    endcase
-  end
-
-  assign word_result_sext = {{32{word_shift_result[31]}}, word_shift_result};
+  assign word_result_sext = {{32{shift_result[31]}}, shift_result[31:0]};
 
   always_comb begin
     unique case (operator_i)
