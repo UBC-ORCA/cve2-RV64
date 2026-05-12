@@ -158,7 +158,7 @@ module cve2_if_stage import cve2_pkg::*; (
       .req_i               ( req_i                      ),
 
       .branch_i            ( branch_req                 ),
-      .addr_i              ( {fetch_addr_n[31:2], 2'b00} ),
+      .addr_i              ( {fetch_addr_n[63:2], 2'b00} ),
 
       .ready_i             ( fetch_ready                ),
       .valid_o             ( fetch_valid                ),
