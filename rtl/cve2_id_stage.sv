@@ -609,11 +609,11 @@ module cve2_id_stage #(
   always_ff @(posedge clk_i or negedge rst_ni) begin : carry_reg
     if (!rst_ni) begin
       carry_in_o <= 1'b0;
-    end else if (((((op_class == OP_CLASS_ADDER) && (id_fsm_q == FIRST_CYCLE)) ||
-                   pcadd_lower_cycle) &&
+    end else if (((((op_class == OP_CLASS_ADDER) && (id_fsm_q == FIRST_CYCLE) && need_upper) ||
+                  (pcadd_lower_cycle && need_upper)) &&
                   !is_word_op &&
                   instr_executing_spec) ||
-                 addr_capture_lower) begin
+                addr_capture_lower) begin
       carry_in_o <= carry_out_i;
     end else begin
       carry_in_o <= 1'b0;
@@ -1644,5 +1644,39 @@ module cve2_id_stage #(
   `ifdef CHECK_MISALIGNED
   `ASSERT(CVE2MisalignedMemoryAccess, !lsu_addr_incr_req_i)
   `endif
+
+//  // synthesis translate_off
+//  always_ff @(posedge clk_i) begin
+//    if (rst_ni && instr_valid_i && instr_executing_spec) begin
+//      if (pc_id_i >= 32'h40 && pc_id_i <= 32'h60) begin
+//        $display("[IDDBG] pc=%08h instr=%08h fsm=%0d rs1=x%0d rs2=x%0d rd=x%0d rA=%08h tagA=%b upA=%b rB=%08h tagB=%b upB=%b aluA=%08h aluB=%08h result=%08h carry_in=%b carry_out=%b lsu_req_dec=%b lsu_req=%b lsu_we=%b lsu_type=%b lsu_addr=%016h lsu_wdata=%08h",
+//          pc_id_i,
+//          instr_rdata_i,
+//          id_fsm_q,
+//          instr_rdata_i[19:15],
+//          instr_rdata_i[24:20],
+//          instr_rdata_i[11:7],
+//          rf_rdata_a_i,
+//          r_a_tag_i,
+//          r_a_upper_o,
+//          rf_rdata_b_i,
+//          r_b_tag_i,
+//          r_b_upper_o,
+//          alu_operand_a,
+//          alu_operand_b,
+//          result_ex_i,
+//          carry_in_o,
+//          carry_out_i,
+//          lsu_req_dec,
+//          lsu_req,
+//          lsu_we,
+//          lsu_type,
+//          lsu_addr_ex_o,
+//          lsu_wdata_o
+//        );
+//      end
+//    end
+//  end
+  // synthesis translate_on
 
 endmodule

@@ -110,6 +110,13 @@ module cve2_register_file_ff #(
   assign rf_reg_lower[0] = WordZeroVal;
   assign rf_reg_upper[0] = WordZeroVal;
 
+//  always_ff @(posedge clk_i) begin
+//    if (rst_ni && we_a_nonzero) begin
+//      $display("[RFDBG] wr x%0d upper=%0b data=%08h tag=%b",
+//              waddr_a_i, w_upper_i, wdata_a_i, w_tag_i);
+//    end
+//  end
+
   for (genvar i = 1; i < NUM_WORDS; i++) begin : g_rf_wave_aliases
     assign rf_reg_lower[i]   = rf_mem_a[{1'b0, ADDR_WIDTH'(i)}];
     assign rf_reg_upper[i]   = rf_mem_a[{1'b1, ADDR_WIDTH'(i)}];
