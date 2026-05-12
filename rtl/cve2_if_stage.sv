@@ -84,7 +84,7 @@ module cve2_if_stage import cve2_pkg::*; (
   logic              prefetch_busy;
   logic              branch_req;
   logic       [63:0] fetch_addr_n;
-  logic              unused_fetch_addr_n0;
+  logic [1:0]        unused_fetch_addr_n;
 
   logic              fetch_valid;
   logic              fetch_ready;
@@ -158,7 +158,7 @@ module cve2_if_stage import cve2_pkg::*; (
       .req_i               ( req_i                      ),
 
       .branch_i            ( branch_req                 ),
-      .addr_i              ( {fetch_addr_n[63:1], 1'b0} ),
+      .addr_i              ( {fetch_addr_n[31:2], 2'b00} ),
 
       .ready_i             ( fetch_ready                ),
       .valid_o             ( fetch_valid                ),
@@ -194,7 +194,7 @@ module cve2_if_stage import cve2_pkg::*; (
     endfunction
   `endif
 
-  assign unused_fetch_addr_n0 = fetch_addr_n[0];
+  assign unused_fetch_addr_n = fetch_addr_n[1:0];
 
   assign branch_req  = pc_set_i;
 
@@ -214,20 +214,11 @@ module cve2_if_stage import cve2_pkg::*; (
   assign if_instr_err_plus2 = ((fetch_addr[2] & ~instr_is_compressed & pmp_err_if_plus2_i) |
                                fetch_err_plus2) & ~pmp_err_if_i;
 
-  // compressed instruction decoding, or more precisely compressed instruction
-  // expander
-  //
-  // since it does not matter where we decompress instructions, we do it here
-  // to ease timing closure
-  cve2_compressed_decoder compressed_decoder_i (
-    .clk_i          (clk_i),
-    .rst_ni         (rst_ni),
-    .valid_i        (fetch_valid & ~fetch_err),
-    .instr_i        (fetch_rdata),
-    .instr_o        (instr_decompressed),
-    .is_compressed_o(instr_is_compressed),
-    .illegal_instr_o(illegal_c_insn)
-  );
+  // No compressed instruction support.
+  // Treat every fetched instruction as a normal 32-bit instruction.
+  assign instr_decompressed  = fetch_rdata;
+  assign instr_is_compressed = 1'b0;
+  assign illegal_c_insn      = 1'b0;
 
   // The ID stage becomes valid as soon as any instruction is registered in the ID stage flops.
   // Note that the current instruction is squashed by the incoming pc_set_i signal.
