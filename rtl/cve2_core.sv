@@ -44,6 +44,8 @@ module cve2_core import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
+  output logic instr_retire_o,
+
   // Data memory interface
   output logic                         data_req_o,
   input  logic                         data_gnt_i,
@@ -375,6 +377,8 @@ module cve2_core import cve2_pkg::*; #(
 
   // For non secure CVE2 only the bottom bit of fetch enable is considered
   assign instr_req_gated = instr_req_int;
+
+  assign instr_retire_o = instr_valid_id & instr_valid_clear;
 
   //////////////
   // ID stage //
