@@ -193,7 +193,11 @@ module cve2_id_stage #(
   output logic                      perf_dside_wait_o,
   output logic                      perf_wfi_wait_o,
   output logic                      perf_div_wait_o,
-  output logic                      instr_id_done_o
+  output logic                      instr_id_done_o,
+
+  // Simulation/debug outputs
+  output logic                      debug_need_upper_o,
+  output logic                      debug_extra_cycle_needed_o
 );
 
   import cve2_pkg::*;
@@ -1588,6 +1592,26 @@ module cve2_id_stage #(
   assign instr_perf_count_id_o = ~ebrk_insn & ~ecall_insn_dec & ~illegal_insn_dec &
       ~(dret_insn_dec & ~debug_mode_o) &
       ~illegal_csr_insn_i & ~instr_fetch_err_i;
+
+  assign debug_need_upper_o = instr_executing_spec &&
+                              (id_fsm_q == FIRST_CYCLE) &&
+                              need_upper;
+
+  assign debug_extra_cycle_needed_o =
+      instr_executing_spec &&
+      (id_fsm_q == FIRST_CYCLE) &&
+      ((lsu_req_dec && addr_needs_upper_cycle) ||
+       (jump_in_dec && addr_needs_upper_cycle) ||
+       (branch_in_dec && cmp_need_lower_after_upper) ||
+       (csr_access_o && csr_need_upper_cycle) ||
+       (op_uses_tagged_path && !branch_in_dec &&
+        ((shift_is_64 && (shift_first_save || (shift_amt_zero && shift_src_explicit))) ||
+         ((op_class == OP_CLASS_COMPARE) && cmp_need_lower_after_upper) ||
+         ((op_class == OP_CLASS_PCADD) && need_upper) ||
+         ((op_class != OP_CLASS_COMPARE) &&
+          (op_class != OP_CLASS_PCADD) &&
+          !shift_is_64 &&
+          need_upper))));
 
   assign en_wb_o = instr_done;
 

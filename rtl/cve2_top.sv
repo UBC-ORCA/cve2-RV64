@@ -40,6 +40,8 @@ module cve2_top import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
+  output logic instr_retire_o,
+
   // Data memory interface
   output logic                         data_req_o,
   input  logic                         data_gnt_i,
@@ -119,7 +121,21 @@ module cve2_top import cve2_pkg::*; #(
 
   // CPU Control Signals
   input  logic                         fetch_enable_i,
-  output logic                         core_sleep_o
+  output logic                         core_sleep_o,
+
+  // Ditto-SC simulation/debug outputs
+  output logic                         debug_instr_first_cycle_o,
+  output logic                         debug_need_upper_o,
+  output logic                         debug_extra_cycle_needed_o,
+  output logic                         debug_rf_ren_a_o,
+  output logic                         debug_rf_ren_b_o,
+  output logic [1:0]                   debug_rf_rtag_a_o,
+  output logic [1:0]                   debug_rf_rtag_b_o,
+  output logic                         debug_rf_final_write_o,
+  output logic [1:0]                   debug_rf_final_wtag_o,
+  output logic                         debug_rf_upper_read_a_o,
+  output logic                         debug_rf_upper_read_b_o,
+  output logic                         debug_rf_upper_write_o
 );
 
   // Scrambling Parameter
@@ -243,6 +259,8 @@ module cve2_top import cve2_pkg::*; #(
     .dm_exception_addr_i,
     .crash_dump_o,
 
+    .instr_retire_o ( instr_retire_o ),
+
 `ifdef RVFI
     .rvfi_valid,
     .rvfi_order,
@@ -274,7 +292,20 @@ module cve2_top import cve2_pkg::*; #(
 `endif
 
     .fetch_enable_i (fetch_enable_q),
-    .core_busy_o    (core_busy_d)
+    .core_busy_o    (core_busy_d),
+
+    .debug_instr_first_cycle_o,
+    .debug_need_upper_o,
+    .debug_extra_cycle_needed_o,
+    .debug_rf_ren_a_o,
+    .debug_rf_ren_b_o,
+    .debug_rf_rtag_a_o,
+    .debug_rf_rtag_b_o,
+    .debug_rf_final_write_o,
+    .debug_rf_final_wtag_o,
+    .debug_rf_upper_read_a_o,
+    .debug_rf_upper_read_b_o,
+    .debug_rf_upper_write_o
   );
 
   ////////////////////////

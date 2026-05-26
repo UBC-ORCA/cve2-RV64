@@ -44,6 +44,8 @@ module cve2_core import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
+  output logic instr_retire_o,
+
   // Data memory interface
   output logic                         data_req_o,
   input  logic                         data_gnt_i,
@@ -126,7 +128,21 @@ module cve2_core import cve2_pkg::*; #(
 
   // CPU Control Signals
   input  logic                         fetch_enable_i,
-  output logic                         core_busy_o
+  output logic                         core_busy_o,
+
+  // Ditto-SC simulation/debug outputs
+  output logic                         debug_instr_first_cycle_o,
+  output logic                         debug_need_upper_o,
+  output logic                         debug_extra_cycle_needed_o,
+  output logic                         debug_rf_ren_a_o,
+  output logic                         debug_rf_ren_b_o,
+  output logic [1:0]                   debug_rf_rtag_a_o,
+  output logic [1:0]                   debug_rf_rtag_b_o,
+  output logic                         debug_rf_final_write_o,
+  output logic [1:0]                   debug_rf_final_wtag_o,
+  output logic                         debug_rf_upper_read_a_o,
+  output logic                         debug_rf_upper_read_b_o,
+  output logic                         debug_rf_upper_write_o
 );
 
   localparam int unsigned PMP_NUM_CHAN      = 3;
@@ -411,6 +427,8 @@ module cve2_core import cve2_pkg::*; #(
   // For non secure CVE2 only the bottom bit of fetch enable is considered
   assign instr_req_gated = instr_req_int;
 
+  assign instr_retire_o = instr_valid_id & instr_valid_clear;
+
   //////////////
   // ID stage //
   //////////////
@@ -585,7 +603,9 @@ module cve2_core import cve2_pkg::*; #(
     .perf_dside_wait_o(perf_dside_wait),
     .perf_wfi_wait_o  (perf_wfi_wait),
     .perf_div_wait_o  (perf_div_wait),
-    .instr_id_done_o  (instr_id_done)
+    .instr_id_done_o  (instr_id_done),
+    .debug_need_upper_o,
+    .debug_extra_cycle_needed_o
   );
 
   // for RVFI only
@@ -737,6 +757,18 @@ module cve2_core import cve2_pkg::*; #(
   ///////////////////////
 
   assign debug_halted_o = debug_mode;
+
+  assign debug_instr_first_cycle_o = instr_first_cycle_id;
+  assign debug_rf_ren_a_o         = rf_ren_a;
+  assign debug_rf_ren_b_o         = rf_ren_b;
+  assign debug_rf_rtag_a_o        = r_a_tag;
+  assign debug_rf_rtag_b_o        = r_b_tag;
+  assign debug_rf_final_write_o   = rf_we_wb && (rf_waddr_wb != 5'd0) &&
+                                    (rf_w_upper_wb || (w_tag != 2'b01));
+  assign debug_rf_final_wtag_o    = w_tag;
+  assign debug_rf_upper_read_a_o  = rf_r_upper_a;
+  assign debug_rf_upper_read_b_o  = rf_r_upper_b;
+  assign debug_rf_upper_write_o   = rf_we_wb && (rf_waddr_wb != 5'd0) && rf_w_upper_wb;
 
   // Explict INC_ASSERT block to avoid unused signal lint warnings were asserts are not included
   `ifdef INC_ASSERT
