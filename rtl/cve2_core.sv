@@ -44,7 +44,17 @@ module cve2_core import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
-  output logic instr_retire_o,
+  output logic                         instr_retire_o,
+  output logic                         perf_instr_ret_o,
+  output logic                         perf_iside_wait_o,
+  output logic                         perf_dside_wait_o,
+  output logic                         perf_jump_o,
+  output logic                         perf_branch_o,
+  output logic                         perf_tbranch_o,
+  output logic                         perf_load_o,
+  output logic                         perf_store_o,
+  output logic                         perf_wfi_wait_o,
+  output logic                         perf_div_wait_o,
 
   // Data memory interface
   output logic                         data_req_o,
@@ -378,7 +388,17 @@ module cve2_core import cve2_pkg::*; #(
   // For non secure CVE2 only the bottom bit of fetch enable is considered
   assign instr_req_gated = instr_req_int;
 
-  assign instr_retire_o = instr_valid_id & instr_valid_clear;
+  assign instr_retire_o      = instr_valid_id & instr_valid_clear;
+  assign perf_instr_ret_o    = perf_instr_ret_wb;
+  assign perf_iside_wait_o   = perf_iside_wait;
+  assign perf_dside_wait_o   = perf_dside_wait;
+  assign perf_jump_o         = perf_jump;
+  assign perf_branch_o       = perf_branch;
+  assign perf_tbranch_o      = perf_tbranch;
+  assign perf_load_o         = perf_load;
+  assign perf_store_o        = perf_store;
+  assign perf_wfi_wait_o     = perf_wfi_wait;
+  assign perf_div_wait_o     = perf_div_wait;
 
   //////////////
   // ID stage //

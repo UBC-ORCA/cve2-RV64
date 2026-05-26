@@ -40,7 +40,17 @@ module cve2_top import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
-  output logic instr_retire_o,
+  output logic                         instr_retire_o,
+  output logic                         perf_instr_ret_o,
+  output logic                         perf_iside_wait_o,
+  output logic                         perf_dside_wait_o,
+  output logic                         perf_jump_o,
+  output logic                         perf_branch_o,
+  output logic                         perf_tbranch_o,
+  output logic                         perf_load_o,
+  output logic                         perf_store_o,
+  output logic                         perf_wfi_wait_o,
+  output logic                         perf_div_wait_o,
 
   // Data memory interface
   output logic                         data_req_o,
@@ -245,7 +255,17 @@ module cve2_top import cve2_pkg::*; #(
     .dm_exception_addr_i,
     .crash_dump_o,
 
-    .instr_retire_o ( instr_retire_o ),
+    .instr_retire_o    ( instr_retire_o ),
+    .perf_instr_ret_o  ( perf_instr_ret_o ),
+    .perf_iside_wait_o ( perf_iside_wait_o ),
+    .perf_dside_wait_o ( perf_dside_wait_o ),
+    .perf_jump_o       ( perf_jump_o ),
+    .perf_branch_o     ( perf_branch_o ),
+    .perf_tbranch_o    ( perf_tbranch_o ),
+    .perf_load_o       ( perf_load_o ),
+    .perf_store_o      ( perf_store_o ),
+    .perf_wfi_wait_o   ( perf_wfi_wait_o ),
+    .perf_div_wait_o   ( perf_div_wait_o ),
 
 `ifdef RVFI
     .rvfi_valid,
