@@ -57,10 +57,10 @@ module cve2_register_file_ff #(
   logic [ADDR_WIDTH:0]   waddr_a_phys;
   logic                  we_a_nonzero;
 
-  (* ram_style = "block" *)
+  (* ram_style = "distributed" *)
   logic [DataWidth-1:0] rf_mem_a [0:NUM_PHYS_WORDS-1];
 
-  (* ram_style = "block" *)
+  (* ram_style = "distributed" *)
   logic [DataWidth-1:0] rf_mem_b [0:NUM_PHYS_WORDS-1];
 
   assign raddr_a      = raddr_a_i[ADDR_WIDTH-1:0];
