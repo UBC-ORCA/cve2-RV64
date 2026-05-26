@@ -40,6 +40,8 @@ module cve2_top import cve2_pkg::*; #(
   input  logic [31:0]                  instr_rdata_i,
   input  logic                         instr_err_i,
 
+  output logic instr_retire_o,
+
   // Data memory interface
   output logic                         data_req_o,
   input  logic                         data_gnt_i,
@@ -242,6 +244,8 @@ module cve2_top import cve2_pkg::*; #(
     .dm_halt_addr_i,
     .dm_exception_addr_i,
     .crash_dump_o,
+
+    .instr_retire_o ( instr_retire_o ),
 
 `ifdef RVFI
     .rvfi_valid,
