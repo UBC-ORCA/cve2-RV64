@@ -149,7 +149,7 @@ module cve2_core import cve2_pkg::*; #(
   // SEC_CM: CORE.DATA_REG_SW.SCA
 
   // IF/ID signals
-  logic        instr_valid_id;
+  logic        instr_valid_id /* verilator public */;
   logic        instr_new_id;
   logic [31:0] instr_rdata_id;                 // Instruction sampled inside IF stage
   logic [31:0] instr_rdata_alu_id;             // Instruction sampled inside IF stage (replicated to
@@ -161,13 +161,13 @@ module cve2_core import cve2_pkg::*; #(
   logic        instr_fetch_err_plus2;          // Instruction error is misaligned
   logic        illegal_c_insn_id;              // Illegal compressed instruction sent to ID stage
   logic [63:0] pc_if;                          // Program counter in IF stage
-  logic [63:0] pc_id;                          // Program counter in ID stage
+  logic [63:0] pc_id /* verilator public */;                          // Program counter in ID stage
   logic [33:0] imd_val_d_ex[2];                // Intermediate register for multicycle Ops
   logic [33:0] imd_val_q_ex[2];                // Intermediate register for multicycle Ops
   logic [1:0]  imd_val_we_ex;
 
   logic        instr_first_cycle_id;
-  logic        instr_valid_clear;
+  logic        instr_valid_clear /* verilator public */;
   logic        pc_set;
   pc_sel_e     pc_mux_id;                      // Mux selector for next PC
   exc_pc_sel_e exc_pc_mux_id;                  // Mux selector for exception PC
