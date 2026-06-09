@@ -873,7 +873,8 @@ module cve2_id_stage #(
   assign shift_first_save       = shift_is_64 &&
                                   (id_fsm_q == FIRST_CYCLE) &&
                                   !shift_amt_zero &&
-                                  !(shift_is_right && shift_amt_ge32);
+                                  !(shift_is_right && shift_amt_ge32) &&
+                                  !(shift_is_right && r_a_tag_i == 2'b10 && !shift_is_arith);
   assign shift_capture          = instr_executing_spec &&
                                   (id_fsm_q == FIRST_CYCLE) &&
                                   shift_is_64;
@@ -1081,8 +1082,10 @@ module cve2_id_stage #(
     end else if (shift_is_64) begin
       if ((id_fsm_q == FIRST_CYCLE) && shift_amt_zero && !shift_src_explicit) begin
         w_tag_id_o = r_a_tag_i;
+      end else if ((id_fsm_q == FIRST_CYCLE) && shift_is_right && !shift_is_arith && r_a_tag_i == 2'b10) begin
+        w_tag_id_o = 2'b10; // This is stupid
       end else if ((id_fsm_q == FIRST_CYCLE) && shift_is_right && shift_amt_ge32) begin
-        w_tag_id_o = (shift_is_arith && rf_rdata_a_fwd[31]) ? 2'b11 : 2'b10;
+        w_tag_id_o = (shift_is_arith && rf_rdata_a_fwd[31]) ? 2'b11 : 2'b10; //BUG????
       end else begin
         // Provisional tag for lower writes that are followed by an upper write.
         w_tag_id_o = 2'b01;

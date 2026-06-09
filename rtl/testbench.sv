@@ -922,6 +922,8 @@ module testbench;
   localparam logic [31:0] SLLI_X3_X1_36   = 32'h02409193; // SLLI x3, x1, 36
   localparam logic [31:0] SRLI_X3_X1_36   = 32'h0240d193; // SRLI x3, x1, 36
   localparam logic [31:0] SRAI_X3_X1_36   = 32'h4240d193; // SRAI x3, x1, 36
+  localparam logic [31:0] SRLI_X3_X1_12   = 32'h00C0D193; // SRLI x3, x1, 12
+  localparam logic [31:0] SRAI_X3_X1_12   = 32'h40C0D193; // SRAI x3, x1, 12
   localparam logic [31:0] LUI_X3_POS       = 32'h7ffff1b7; // LUI   x3, 0x7ffff
   localparam logic [31:0] LUI_X3_NEG       = 32'h800001b7; // LUI   x3, 0x80000
   localparam logic [31:0] AUIPC_X3_1       = 32'h00001197; // AUIPC x3, 0x1
@@ -2477,6 +2479,26 @@ module testbench;
     write_rf_64(5'd2, 32'h0000_0000, 32'h0000_0001, 2'b10);
     inject_instr(SRL_X2_X1_X2, cycles);
     check_result("SH09", 5'd2, 32'h8000_0000, 2'b10, 3, cycles, 32'h0000_0000, 1'b1);
+
+    $display("\n---- SH-10: SRLI shamt < 32 and upper == 0 ignores upper ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h89ab_cdef, 2'b10);
+    inject_instr(SRLI_X3_X1_12, cycles);
+    check_result("SH10", 5'd3, 32'h0008_9abc, 2'b10, 1, cycles, 32'h0, 1'b0);
+
+    $display("\n---- SH-11: SRLI shamt < 32 and upper == 0 ignores upper ----");
+    write_rf_64(5'd1, 32'h0000_0001, 32'h89ab_cdef, 2'b01);
+    inject_instr(SRLI_X3_X1_12, cycles);
+    check_result("SH11", 5'd3, 32'h0018_9abc, 2'b10, 3, cycles, 32'h0, 1'b0);
+
+    $display("\n---- SH-12: SRAI shamt >= 32 and upper == lower[31] ignores upper ----");
+    write_rf_64(5'd1, 32'h0000_0000, 32'h89ab_cdef, 2'b10);
+    inject_instr(SRAI_X3_X1_12, cycles);
+    check_result("SH12", 5'd3, 32'h0008_9abc, 2'b10, 3, cycles, 32'h0, 1'b0);
+
+    $display("\n---- SH-13: SRAI shamt >= 32 and upper == lower[31] ignores upper ----");
+    write_rf_64(5'd1, 32'hFFFF_FFFF, 32'hF9ab_cdef, 2'b11);
+    inject_instr(SRAI_X3_X1_12, cycles);
+    check_result("SH13", 5'd3, 32'hFFFF_9abc, 2'b11, 3, cycles, 32'h0, 1'b0);
 
     $display("\n==============================");
     $display("All %0d RV64 shift tests complete", 9);
